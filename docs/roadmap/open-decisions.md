@@ -114,6 +114,13 @@ Resolved items are removed from this list and captured in the relevant design or
 | FastAPI for REST layer | ADR-006 |
 | FastMCP for MCP server | ADR-007 |
 | Web UI rendering model (Vue 3 + Vite) | ADR-008 |
+| Topic extraction library (YAKE for v1; spaCy + LLM as v2 opt-ins) | ADR-009 |
+| Reader mode library (trafilatura) | ADR-010 |
+| ShareTarget storage (graph node, API keys excluded from export) | `docs/architecture/data-model.md` |
+| Derived edge schedule (6h default, `POST /api/v1/graph/recompute` on-demand) | `docs/architecture/feed-poller.md` |
+| OPML folder handling (map to flat tags, surface mapping in import response) | `docs/design/user-patterns.md` |
+| Instance backup format (JSON via API for portability; Kuzu dir copy for fast local backup) | `docs/architecture/api-design.md` |
+| PyPI package name (`reed-rss`; CLI entry point remains `reed`) | `pyproject.toml` |
 | v1 feed ingestion patterns | `docs/design/user-patterns.md` |
 | v1 reading patterns | `docs/design/user-patterns.md` |
 | Import/export scope (OPML + JSON profile + instance backup) | `docs/design/user-patterns.md` |
