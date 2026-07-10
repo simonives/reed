@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -12,6 +13,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from .api.feeds import router as feeds_router
+from .api.items import router as items_router
 from .config import get_settings
 from .graph import GraphService
 from .poller import FeedPoller
@@ -29,6 +32,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
 
     _graph = GraphService(settings.data_path)
+    app.state.graph = _graph
+
     _poller = FeedPoller(_graph)
     _poller_task = asyncio.create_task(_poller.start())
 
@@ -39,6 +44,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _poller.stop()
     if _poller_task:
         _poller_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _poller_task
     if _graph:
         _graph.close()
     logger.info("Reed stopped")
@@ -52,7 +59,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # API routers registered in M1
+    app.include_router(feeds_router)
+    app.include_router(items_router)
 
     frontend_dist = Path(get_settings().frontend_path)
     if frontend_dist.exists():
