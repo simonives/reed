@@ -43,6 +43,8 @@ htmlcov/
 node_modules/
 frontend/dist/
 frontend/.vite/
+website/.vitepress/dist/
+website/.vitepress/cache/
 *.local
 
 # Docker

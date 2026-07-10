@@ -291,6 +291,11 @@ Public release. Reed is ready for users who are not Simon.
 - `CHANGELOG.md` accurate and complete for v1.0.0
 - All `docs/` stubs replaced with complete content
 
+**Website**
+- GitHub Pages site (`website/`) live at `simonives.github.io/reed` (or custom domain if configured)
+- Landing page complete: hero, feature highlights, quickstart, installation, community links
+- VitePress site built and deployed via `pages.yml` workflow
+
 **Repository**
 - GitHub Release created with tag `v1.0.0`
 - Release notes summarising v1 scope
@@ -322,5 +327,6 @@ Additional distribution channels to be added after v1.0.0. None are blockers for
 
 ## Open items for M7
 
-- **PyPI name:** `reed` is likely taken on PyPI (common English word). Check availability before M7 and decide on `reed-rss`, `reed-reader`, or an alternative. Update pipx install instructions accordingly.
+- **PyPI name:** Resolved — `reed` is taken (job search wrapper, abandoned at v0.0.4). Package name is `reed-rss`; CLI entry point remains `reed`. Update pipx install instructions to `pipx install reed-rss`.
 - **GitHub repository visibility:** Repository is currently private. Set to public as part of the M7 release process, not before.
+- **GitHub Pages domain:** Site will be live at `simonives.github.io/reed` by default. Decide whether to configure a custom domain before v1.0.0.
