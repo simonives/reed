@@ -71,4 +71,4 @@ Reed publishes SBOMs not because it is required to, but because it is the right 
 
 ## Licence
 
-Reed is MIT licensed. All dependencies are permissively licensed (MIT, Apache 2.0, BSD). The SBOM includes the licence for every dependency.
+Reed is AGPL v3 licensed. All dependencies are permissively licensed (MIT, Apache 2.0, BSD). The SBOM includes the licence for every dependency.

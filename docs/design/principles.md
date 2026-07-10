@@ -31,8 +31,8 @@ The article is the product. The chrome — navigation, controls, status indicato
 A slow RSS reader breaks the reading habit. Speed is not a nice-to-have; it is core to the product.
 
 **In practice:**
-- Server-rendered or HTMX — no full-page JavaScript bundle to parse before content appears
-- Item list is rendered immediately; full article content loads on demand
+- Vue 3 bundle is built with Vite, tree-shaken and code-split — parsed once on first load, then navigation is instant with no page reloads
+- Item list renders immediately from cached API responses; full article content loads on demand
 - Polling and graph computation happen in the background — the UI never blocks on them
 - Keyboard navigation moves between items without a network round-trip
 

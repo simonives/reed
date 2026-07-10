@@ -8,7 +8,7 @@ Reed is a single-user, self-hosted RSS reader built for simplicity and developer
 
 ## Status
 
-Early design phase. Architecture documentation in progress.
+Active development — M0 scaffold complete. The Python package, Vue 3 frontend skeleton, Dockerfile, and CI pipeline are in place. Working towards M1: feed polling, graph schema, and the first real API endpoints.
 
 ## Design goals
 
@@ -24,6 +24,7 @@ Early design phase. Architecture documentation in progress.
 - **Kuzu** — embedded graph database
 - **FastAPI** — REST API and OpenAPI documentation
 - **FastMCP** — MCP server
+- **Vue 3 + Vite** — web UI (three-pane reader, keyboard-first)
 - **Docker Compose** — primary distribution and deployment
 
 ## Self-hosting
@@ -41,4 +42,4 @@ reed serve
 
 ## Licence
 
-MIT
+AGPL v3
