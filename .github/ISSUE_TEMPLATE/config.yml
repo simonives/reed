@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question or start a discussion
+    url: https://github.com/simonives/reed/discussions
+    about: Use GitHub Discussions for questions, ideas, and general conversation.
+  - name: Report a security vulnerability
+    url: https://github.com/simonives/reed/security/advisories/new
+    about: Report security issues privately — do not open a public issue.
