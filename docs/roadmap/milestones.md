@@ -329,4 +329,5 @@ Additional distribution channels to be added after v1.0.0. None are blockers for
 
 - **PyPI name:** Resolved — `reed` is taken (job search wrapper, abandoned at v0.0.4). Package name is `reed-rss`; CLI entry point remains `reed`. Update pipx install instructions to `pipx install reed-rss`.
 - **GitHub repository visibility:** Repository is currently private. Set to public as part of the M7 release process, not before.
+- **GitHub Pages activation:** Requires the repo to be public (free account restriction). Sequence at M7: make repo public → Settings → Pages → Source: GitHub Actions. The `pages.yml` workflow then deploys automatically on the next push touching `website/**`.
 - **GitHub Pages domain:** Site will be live at `simonives.github.io/reed` by default. Decide whether to configure a custom domain before v1.0.0.
