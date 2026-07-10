@@ -11,7 +11,7 @@
 3. **Graph-native.** Relationships between feeds, items, topics, authors, and tags are first-class data, not derived from joins at query time.
 4. **MCP as a primary interface.** The MCP server is built alongside the API, not bolted on. AI clients traversing the graph are an expected and supported use case.
 5. **Zero operational overhead.** No database server to run, no message broker, no external services. The data layer is an embedded file. `docker-compose up` is the entire deployment.
-6. **Open source, permissively licensed.** MIT licence. Anyone can download, run, fork, and contribute.
+6. **Open source, copyleft licensed.** AGPL v3. Anyone can download, run, fork, and contribute. Commercial SaaS use of Reed's code requires contributing back.
 
 ---
 
@@ -23,6 +23,7 @@
 | Data store | Kuzu | Embedded graph DB (no server process); Cypher query language; Apache 2.0; the SQLite of graph databases |
 | REST framework | FastAPI | Automatic OpenAPI/Swagger docs; async-native; Pydantic validation |
 | MCP server | FastMCP | Python-native; minimal boilerplate; matches the application language |
+| Web UI | Vue 3 + Vite | Three-pane layout and keyboard shortcuts require client-side reactive state; Vue 3 Composition API is natural for Python developers; best-documented FastAPI pairing |
 | Packaging | Docker Compose + GitHub source | Docker is the self-hosting standard for this audience; source available for contributors and alternative deployments |
 | Container registry | GitHub Container Registry (GHCR) | Co-located with source; free for public images |
 | Auth | API key (single-user) | Single-user context makes OAuth unnecessary; a static key in environment config is sufficient |
@@ -64,9 +65,9 @@
 │                                                     │
 │  ┌─────────────┐   ┌─────────────┐                 │
 │  │   Web UI    │   │  MCP Server │                 │
-│  │  (FastAPI   │   │  (FastMCP)  │                 │
-│  │   static or │   │             │                 │
-│  │   Jinja2)   │   └──────┬──────┘                 │
+│  │  (Vue 3 +   │   │  (FastMCP)  │                 │
+│  │   Vite,     │   │             │                 │
+│  │   static)   │   └──────┬──────┘                 │
 │  └──────┬──────┘          │                        │
 │         │                 │                        │
 │  ┌──────▼─────────────────▼──────┐                 │
@@ -111,8 +112,8 @@ A Python module wrapping all Kuzu interactions. The API and MCP server both impo
 **Feed Poller**
 An async background worker (asyncio) that runs inside the same container. On startup, it schedules polls for all registered feeds based on `poll_interval_minutes`. On each poll: fetches the feed URL (honouring ETag and Last-Modified for conditional GET), parses items, writes new `Item` nodes and edges to the graph, updates `Feed` poll metadata.
 
-**Web UI**
-Lightweight. Options under consideration: Jinja2 server-rendered templates (zero JS dependencies, simplest) or a minimal HTMX frontend (interactive without a JS build step). Not a heavy SPA. The UI is a convenience layer — the API is the product.
+**Web UI (Vue 3 + Vite)**
+A Vue 3 single-page application built with Vite, served as static files from the FastAPI container. Pinia manages shared state (active feed, selected item, read/starred tracking). The app consumes `/api/v1/` exclusively — no server-rendered HTML. Vite's multi-stage Docker build produces a `dist/` bundle mounted at the container root. The three-pane layout, keyboard shortcuts, and scroll-based read tracking require client-side reactive state; this is the model they are native to. See `ADR-008`.
 
 ---
 
@@ -190,13 +191,4 @@ The traversal tools are the differentiator. An AI client can hop: item → topic
 
 ## Open decisions
 
-These are not yet locked in and require further ideation:
-
-- **Web UI rendering model** — Jinja2 (server-rendered) vs HTMX vs minimal React
-- **Topic extraction** — simple keyword extraction (e.g. RAKE, YAKE) vs lightweight NLP (spaCy) vs calling an LLM via API
-- **OPML import/export** — high priority for initial release
-- **Webhook support** — notify an endpoint when new items matching a filter arrive
-- **Feed discovery** — given a URL, find the feed (common `<link rel="alternate">` parsing)
-- **Derived edge computation schedule** — how often to recompute `SIMILAR_TO` and `RELATED_TO` edges; on every poll or on a separate schedule
-- **Repository name** — `reed` (likely; pending GitHub availability check)
-- **Versioning and release strategy**
+See `docs/roadmap/open-decisions.md` for the live list of unresolved decisions and `docs/roadmap/open-decisions.md#resolved-decisions` for the full resolution log.

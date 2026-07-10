@@ -6,21 +6,6 @@ Resolved items are removed from this list and captured in the relevant design or
 
 ---
 
-## UI rendering model
-
-**Question:** Jinja2 server-rendered templates, HTMX, or minimal React/Preact?
-
-**Affects:** Frontend build setup, developer experience, interactivity ceiling, keyboard shortcut implementation
-
-**Options:**
-- Jinja2 — zero JS dependencies, simplest, but limited interactivity without page reloads; keyboard shortcuts require vanilla JS
-- HTMX — interactive without a JS build step; stays server-centric; keyboard shortcuts via hyperscript or vanilla JS
-- Minimal SPA (React/Preact) — most interactive; cleanest keyboard shortcut implementation; introduces a build pipeline
-
-**Notes:** Three-pane layout and keyboard shortcuts (v1) push toward HTMX or a light SPA. Pure Jinja2 will feel sluggish for the reading loop.
-
----
-
 ## Topic extraction approach
 
 **Question:** How are topics extracted from feed item content?
@@ -128,6 +113,7 @@ Resolved items are removed from this list and captured in the relevant design or
 | Docker Compose distribution | ADR-005 |
 | FastAPI for REST layer | ADR-006 |
 | FastMCP for MCP server | ADR-007 |
+| Web UI rendering model (Vue 3 + Vite) | ADR-008 |
 | v1 feed ingestion patterns | `docs/design/user-patterns.md` |
 | v1 reading patterns | `docs/design/user-patterns.md` |
 | Import/export scope (OPML + JSON profile + instance backup) | `docs/design/user-patterns.md` |
