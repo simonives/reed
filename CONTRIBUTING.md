@@ -18,7 +18,7 @@ Reed is in active early development. Before starting work on anything significan
 ## Development setup
 
 **Prerequisites:**
-- Python 3.12+
+- Python 3.11+
 - Docker and Docker Compose (for integration testing)
 - Git
 

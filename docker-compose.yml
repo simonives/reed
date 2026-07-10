@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Simon Ives and contributors
+
+services:
+  reed:
+    image: ghcr.io/simonives/reed:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      REED_API_KEY: "change-me"
+      REED_DATA_PATH: "/data/reed.kuzu"
+      REED_POLL_DEFAULT_INTERVAL: "60"
+    restart: unless-stopped

@@ -39,6 +39,12 @@ htmlcov/
 # macOS
 .DS_Store
 
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
 # Docker
 docker-compose.override.yml
 

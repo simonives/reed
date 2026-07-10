@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Simon Ives and contributors
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reed-rss"
+version = "0.1.0"
+description = "A self-hosted, open-source RSS reader with a graph-native data model, REST API, and MCP server"
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "kuzu>=0.7",
+    "fastmcp>=2.0",
+    "feedparser>=6.0",
+    "httpx>=0.27",
+    "trafilatura>=1.12",
+    "yake>=0.4",
+    "python-multipart>=0.0.12",
+    "pydantic-settings>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+]
+
+[project.scripts]
+reed = "reed.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/simonives/reed"
+Repository = "https://github.com/simonives/reed"
+Issues = "https://github.com/simonives/reed/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reed"]
+
+# --- Ruff ---
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+# --- Mypy ---
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["kuzu", "feedparser", "trafilatura", "yake"]
+ignore_missing_imports = true
+
+# --- Pytest ---
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/reed"]
