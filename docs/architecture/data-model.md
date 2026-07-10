@@ -154,14 +154,19 @@ A singleton node holding global application configuration. There is exactly one 
 
 ```cypher
 CREATE NODE TABLE Config (
-    id                          STRING,
+    id                            STRING,
     default_poll_interval_minutes INT64,
-    reader_mode_enabled         BOOLEAN,
-    default_theme               STRING,
-    items_per_page              INT64,
-    mark_read_on_open           BOOLEAN,
-    created_at                  TIMESTAMP,
-    updated_at                  TIMESTAMP,
+    reader_mode_enabled           BOOLEAN,
+    default_theme                 STRING,
+    items_per_page                INT64,
+    mark_read_on_open             BOOLEAN,
+    css_accent_color              STRING,
+    css_font_size_base            INT64,
+    css_reading_width             INT64,
+    css_line_height               DOUBLE,
+    css_font_family_reading       STRING,
+    created_at                    TIMESTAMP,
+    updated_at                    TIMESTAMP,
     PRIMARY KEY (id)
 )
 ```

@@ -124,11 +124,29 @@ Every setting in Reed solves a real problem for a real user. Settings are not ad
 - Default theme (light / dark / system)
 - Items per page
 - Mark read on open (on/off)
+- CSS variable overrides (accent colour, font size, reading width, line height) — see below
 
 **Settings that do not belong in v1:**
-- Font choice
-- Custom CSS
+- Full custom CSS / skin upload
 - Per-folder layout overrides
+
+### CSS customisation in v1
+
+Users can tweak Reed's appearance from Settings without editing a file. A small set of CSS custom properties is exposed as named controls — colour pickers, sliders, and dropdowns — stored in the Config node and injected into every page as `:root {}` overrides.
+
+**v1 exposed variables:**
+
+| Variable | Control | Default |
+|---|---|---|
+| `--accent-color` | Colour picker | Reed default blue |
+| `--font-size-base` | Slider (12px–20px) | 16px |
+| `--reading-width` | Slider (600px–1200px) | 760px |
+| `--line-height` | Slider (1.4–2.0) | 1.65 |
+| `--font-family-reading` | Dropdown (system-ui, Georgia, Merriweather) | system-ui |
+
+These variables apply globally across both light and dark themes. A "Reset to defaults" button restores all values.
+
+**v2 skin system:** Full CSS file upload or in-app CSS editor for users who want complete control over Reed's appearance. v1 variables remain as a convenience layer above the v2 system.
 
 ---
 
