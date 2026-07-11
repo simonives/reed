@@ -1,5 +1,9 @@
 # Reed
 
+[![CI Status](https://github.com/simonives/reed/actions/workflows/ci.yml/badge.svg)](https://github.com/simonives/reed/actions/workflows/ci.yml) ![Python
+  Version](https://img.shields.io/badge/python-3.11+-blue.svg) [![Release](https://img.shields.io/github/v/release/simonives/reed)](https://github.
+  com/simonives/reed/releases) [![License](https://img.shields.io/github/license/simonives/reed)](https://github.com/simonives/reed/blob/main/LICENSE)
+
 A self-hosted, open-source RSS reader with a graph-native data model, public REST API, and first-class MCP server.
 
 ## What is Reed?
