@@ -3,10 +3,59 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
 
 from reed.config import get_settings
+
+SAMPLE_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>https://example.com</link>
+    <description>A test feed</description>
+    <item>
+      <title>First Post</title>
+      <link>https://example.com/1</link>
+      <guid>https://example.com/1</guid>
+      <author>Jane Author</author>
+      <description>Summary of the first post</description>
+      <pubDate>Mon, 01 Jan 2026 12:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Second Post</title>
+      <link>https://example.com/2</link>
+      <guid>https://example.com/2</guid>
+    </item>
+  </channel>
+</rss>"""
+
+
+def mock_http_response(content: bytes = SAMPLE_RSS, status_code: int = 200):
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.content = content
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+@contextmanager
+def patched_feed_fetch(response=None, side_effect=None):
+    """Patch the outbound HTTP fetch used by POST /feeds and /feeds/discover."""
+    mock_client = AsyncMock()
+    if side_effect is not None:
+        mock_client.get = AsyncMock(side_effect=side_effect)
+    else:
+        mock_client.get = AsyncMock(return_value=response or mock_http_response())
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=mock_client)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    with patch("reed.api.feeds.http_client", return_value=cm):
+        yield mock_client
 
 
 @pytest.fixture(autouse=True)
@@ -35,3 +84,17 @@ def authed(reed_client):
     """TestClient with the API key header pre-set."""
     reed_client.headers.update({"X-API-Key": "test-key"})
     return reed_client
+
+
+@pytest.fixture
+def subscribed_feed(authed, reed_client):
+    """Subscribe to a feed and ingest SAMPLE_RSS; returns the feed object."""
+    from reed.poller import FeedPoller
+
+    with patched_feed_fetch():
+        r = authed.post("/api/v1/feeds", json={"url": "https://example.com/feed.rss"})
+    feed = r.json()["data"]
+
+    poller = FeedPoller(reed_client.app.state.graph)
+    poller._ingest_entries(feed["url"], SAMPLE_RSS, datetime.now(UTC))
+    return feed

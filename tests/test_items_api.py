@@ -4,135 +4,168 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from reed.poller import FeedPoller
 
-SAMPLE_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-  <channel>
-    <title>Test Feed</title>
-    <link>https://example.com</link>
-    <description>A test feed</description>
-    <item>
-      <title>First Post</title>
-      <link>https://example.com/1</link>
-      <guid>https://example.com/1</guid>
-      <pubDate>Mon, 01 Jan 2026 12:00:00 +0000</pubDate>
-    </item>
-    <item>
-      <title>Second Post</title>
-      <link>https://example.com/2</link>
-      <guid>https://example.com/2</guid>
-    </item>
-  </channel>
-</rss>"""
+from .conftest import SAMPLE_RSS, patched_feed_fetch
 
 
-def _mock_http(content: bytes = SAMPLE_RSS):
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.content = content
-    resp.raise_for_status = MagicMock()
-    return resp
-
-
-def _subscribe_and_poll(authed, graph_service, url="https://example.com/feed.rss"):
-    """Subscribe to a feed and directly ingest entries via GraphService."""
-    with patch("reed.api.feeds.httpx.AsyncClient") as mock_cls:
-        mock_client = AsyncMock()
-        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_client.get = AsyncMock(return_value=_mock_http())
-        authed.post("/api/v1/feeds", json={"url": url})
-
-    # Ingest entries directly without going through the async poller
-    poller = FeedPoller(graph_service)
-    now = datetime.now(UTC)
-    poller._ingest_entries(url, SAMPLE_RSS, now)
-    return url
+def _items(authed, query=""):
+    return authed.get(f"/api/v1/items{query}").json()["data"]
 
 
 class TestListItems:
     def test_empty_when_no_feeds(self, authed):
         r = authed.get("/api/v1/items")
         assert r.status_code == 200
-        assert r.json() == []
+        assert r.json()["data"] == []
+        assert r.json()["meta"]["total"] == 0
 
-    def test_items_appear_after_ingest(self, authed, reed_client):
-        graph = reed_client.app.state.graph
-        _subscribe_and_poll(authed, graph)
+    def test_items_appear_after_ingest(self, authed, subscribed_feed):
+        items = _items(authed)
+        assert {i["title"] for i in items} == {"First Post", "Second Post"}
 
-        r = authed.get("/api/v1/items")
-        assert r.status_code == 200
-        items = r.json()
-        assert len(items) == 2
-        titles = {i["title"] for i in items}
-        assert titles == {"First Post", "Second Post"}
+    def test_list_item_shape(self, authed, subscribed_feed):
+        first = next(i for i in _items(authed) if i["title"] == "First Post")
+        assert first["id"]
+        assert first["read"] is False
+        assert first["starred"] is False
+        assert first["feed"]["id"] == subscribed_feed["id"]
+        assert first["feed"]["title"] == "Test Feed"
+        assert first["author"] == {"name": "Jane Author"}
+        assert first["summary"] == "Summary of the first post"
+        assert "content" not in first  # detail-only field
 
-    def test_filter_by_feed_url(self, authed, reed_client):
-        graph = reed_client.app.state.graph
-        feed_url = _subscribe_and_poll(authed, graph)
+    def test_filter_by_feed_id(self, authed, subscribed_feed):
+        r = authed.get(f"/api/v1/items?feed_id={subscribed_feed['id']}")
+        assert len(r.json()["data"]) == 2
 
-        r = authed.get(f"/api/v1/items?feed_url={feed_url}")
-        assert r.status_code == 200
-        assert len(r.json()) == 2
+    def test_filter_by_unknown_feed_returns_empty(self, authed, subscribed_feed):
+        r = authed.get("/api/v1/items?feed_id=no-such-id")
+        assert r.json()["data"] == []
 
-    def test_filter_by_unknown_feed_returns_empty(self, authed):
-        r = authed.get("/api/v1/items?feed_url=https://unknown.example/feed")
-        assert r.status_code == 200
-        assert r.json() == []
+    def test_unread_filter(self, authed, subscribed_feed):
+        items = _items(authed)
+        authed.patch(f"/api/v1/items/{items[0]['id']}", json={"read": True})
+        unread = _items(authed, "?unread=true")
+        assert len(unread) == 1
+        assert unread[0]["id"] != items[0]["id"]
 
-    def test_items_have_required_fields(self, authed, reed_client):
-        graph = reed_client.app.state.graph
-        _subscribe_and_poll(authed, graph)
+    def test_pagination_meta(self, authed, subscribed_feed):
+        r = authed.get("/api/v1/items?limit=1&offset=0")
+        body = r.json()
+        assert len(body["data"]) == 1
+        assert body["meta"]["total"] == 2
+        assert body["meta"]["has_more"] is True
 
-        items = authed.get("/api/v1/items").json()
-        for item in items:
-            assert "guid" in item
-            assert "url" in item
-            assert "title" in item
-            assert "read" in item
-            assert "starred" in item
-            assert item["read"] is False
-            assert item["starred"] is False
-
-    def test_pagination(self, authed, reed_client):
-        graph = reed_client.app.state.graph
-        _subscribe_and_poll(authed, graph)
-
-        first = authed.get("/api/v1/items?limit=1&offset=0").json()
         second = authed.get("/api/v1/items?limit=1&offset=1").json()
-        assert len(first) == 1
-        assert len(second) == 1
-        assert first[0]["guid"] != second[0]["guid"]
+        assert second["data"][0]["id"] != body["data"][0]["id"]
+        assert second["meta"]["has_more"] is False
 
-    def test_negative_limit_returns_422(self, authed):
+    def test_invalid_limit_returns_400(self, authed):
         r = authed.get("/api/v1/items?limit=-1")
-        assert r.status_code == 422
+        assert r.status_code == 400
+        assert r.json()["error"]["code"] == "VALIDATION_ERROR"
 
-    def test_negative_offset_returns_422(self, authed):
-        r = authed.get("/api/v1/items?offset=-1")
-        assert r.status_code == 422
-
-    def test_resubscribe_reattaches_items(self, authed, reed_client):
+    def test_resubscribe_reattaches_items(self, authed, reed_client, subscribed_feed):
         """Items orphaned by delete_feed must reappear after resubscription."""
         graph = reed_client.app.state.graph
-        feed_url = _subscribe_and_poll(authed, graph)
+        authed.delete(f"/api/v1/feeds/{subscribed_feed['id']}")
+        assert _items(authed) == []
 
-        authed.delete(f"/api/v1/feeds/{feed_url}")
-        assert authed.get("/api/v1/items").json() == []
-
-        # Resubscribe and re-ingest the same guids
-        with patch("reed.api.feeds.httpx.AsyncClient") as mock_cls:
-            mock_client = AsyncMock()
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_client.get = AsyncMock(return_value=_mock_http())
-            authed.post("/api/v1/feeds", json={"url": feed_url})
+        with patched_feed_fetch():
+            authed.post("/api/v1/feeds", json={"url": subscribed_feed["url"]})
 
         poller = FeedPoller(graph)
-        poller._ingest_entries(feed_url, SAMPLE_RSS, datetime.now(UTC))
+        poller._ingest_entries(subscribed_feed["url"], SAMPLE_RSS, datetime.now(UTC))
+        assert len(_items(authed)) == 2
 
-        items = authed.get("/api/v1/items").json()
-        assert len(items) == 2
+
+class TestItemDetail:
+    def test_get_item_detail(self, authed, subscribed_feed):
+        item_id = _items(authed)[0]["id"]
+        r = authed.get(f"/api/v1/items/{item_id}")
+        assert r.status_code == 200
+        detail = r.json()["data"]
+        assert "content" in detail
+        assert detail["note"] is None
+        assert detail["reader_content"] is None
+
+    def test_unknown_item_returns_404(self, authed):
+        r = authed.get("/api/v1/items/no-such-id")
+        assert r.status_code == 404
+
+
+class TestItemState:
+    def test_mark_read(self, authed, subscribed_feed):
+        item_id = _items(authed)[0]["id"]
+        r = authed.patch(f"/api/v1/items/{item_id}", json={"read": True})
+        assert r.status_code == 200
+        assert r.json()["data"]["read"] is True
+
+    def test_star_and_unstar(self, authed, subscribed_feed):
+        item_id = _items(authed)[0]["id"]
+        assert authed.patch(f"/api/v1/items/{item_id}", json={"starred": True}).json()["data"][
+            "starred"
+        ]
+        assert (
+            authed.patch(f"/api/v1/items/{item_id}", json={"starred": False}).json()["data"][
+                "starred"
+            ]
+            is False
+        )
+
+    def test_starred_filter(self, authed, subscribed_feed):
+        item_id = _items(authed)[0]["id"]
+        authed.patch(f"/api/v1/items/{item_id}", json={"starred": True})
+        starred = _items(authed, "?starred=true")
+        assert len(starred) == 1
+        assert starred[0]["id"] == item_id
+
+
+class TestBulkMarkRead:
+    def test_mark_all_read(self, authed, subscribed_feed):
+        r = authed.post("/api/v1/items/mark-read", json={})
+        assert r.status_code == 200
+        assert r.json()["data"]["marked_read"] == 2
+        assert _items(authed, "?unread=true") == []
+
+    def test_mark_read_for_feed(self, authed, subscribed_feed):
+        r = authed.post("/api/v1/items/mark-read", json={"feed_id": subscribed_feed["id"]})
+        assert r.json()["data"]["marked_read"] == 2
+
+    def test_mark_read_before_date(self, authed, subscribed_feed):
+        # Only "First Post" has a published date (2026-01-01); "Second Post"
+        # falls back to fetched_at (now), which is after the cutoff.
+        r = authed.post("/api/v1/items/mark-read", json={"before": "2026-02-01T00:00:00Z"})
+        assert r.json()["data"]["marked_read"] == 1
+        unread = _items(authed, "?unread=true")
+        assert unread[0]["title"] == "Second Post"
+
+    def test_unknown_feed_returns_404(self, authed):
+        r = authed.post("/api/v1/items/mark-read", json={"feed_id": "no-such-id"})
+        assert r.status_code == 404
+
+    def test_idempotent(self, authed, subscribed_feed):
+        authed.post("/api/v1/items/mark-read", json={})
+        r = authed.post("/api/v1/items/mark-read", json={})
+        assert r.json()["data"]["marked_read"] == 0
+
+
+class TestOrphanedItems:
+    """Starred and tagged items stay visible after their feed is removed."""
+
+    def test_starred_and_tagged_survive_feed_delete(self, authed, subscribed_feed):
+        items = _items(authed)
+        starred_id, tagged_id = items[0]["id"], items[1]["id"]
+        authed.patch(f"/api/v1/items/{starred_id}", json={"starred": True})
+        authed.post(f"/api/v1/items/{tagged_id}/tags", json={"name": "keep"})
+
+        authed.delete(f"/api/v1/feeds/{subscribed_feed['id']}")
+
+        # Feed-derived views drop orphans; curated views keep them
+        assert _items(authed) == []
+        starred = _items(authed, "?starred=true")
+        assert [i["id"] for i in starred] == [starred_id]
+        assert starred[0]["feed"] is None
+        assert [i["id"] for i in _items(authed, "?tag=keep")] == [tagged_id]

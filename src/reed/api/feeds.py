@@ -4,17 +4,20 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 import feedparser
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
-from ..config import get_settings
+from ..config import effective_config
+from ..discovery import discover_feeds
 from ..graph import GraphService
-from .deps import get_graph, require_api_key
+from ..http import http_client
+from ..poller import FeedPoller
+from .deps import get_graph, get_poller, require_api_key
+from .schemas import envelope, feed_response, item_list_response, paginated
 
 logger = logging.getLogger(__name__)
 
@@ -27,28 +30,37 @@ router = APIRouter(
 
 class FeedCreate(BaseModel):
     url: str
-    poll_interval_minutes: int = 0  # 0 = use server default
+    display_name: str | None = None
+    tags: list[str] = []
+    poll_interval_minutes: int | None = None  # None = inherit global default
 
 
-class FeedResponse(BaseModel):
+class FeedUpdate(BaseModel):
+    display_name: str | None = None
+    poll_interval_minutes: int | None = None
+    reader_mode_enabled: bool | None = None
+    is_active: bool | None = None
+    tags: list[str] | None = None
+
+
+class DiscoverRequest(BaseModel):
     url: str
-    title: str
-    description: str
-    site_url: str
-    poll_interval_minutes: int
-    last_fetched_at: datetime | None
-    error_state: str | None
-    etag: str | None
-    last_modified: str | None
 
 
-@router.post("", response_model=FeedResponse, status_code=status.HTTP_201_CREATED)
+def _feed_or_404(graph: GraphService, feed_id: str) -> dict[str, Any]:
+    feed = graph.get_feed(feed_id)
+    if feed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feed not found")
+    return feed
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     if graph.feed_exists(body.url):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Feed already subscribed")
 
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        async with http_client() as client:
             response = await client.get(body.url)
         response.raise_for_status()
     except httpx.HTTPError as exc:
@@ -60,32 +72,88 @@ async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) 
     parsed = feedparser.parse(response.content)
     feed_meta = parsed.feed
 
-    settings = get_settings()
-    interval = body.poll_interval_minutes or settings.poll_default_interval
-
-    return graph.create_feed(
+    feed = graph.create_feed(
         url=body.url,
         title=feed_meta.get("title", body.url),
         description=feed_meta.get("description", ""),
         site_url=feed_meta.get("link", ""),
-        poll_interval_minutes=interval,
+        display_name=body.display_name,
+        poll_interval_minutes=body.poll_interval_minutes,
+        tags=body.tags,
     )
+    return envelope(feed_response(feed, effective_config(graph)))
 
 
-@router.get("", response_model=list[FeedResponse])
-async def list_feeds(graph: GraphService = Depends(get_graph)) -> list[dict[str, Any]]:
-    return graph.list_feeds()
+@router.post("/discover")
+async def discover(body: DiscoverRequest) -> dict[str, Any]:
+    try:
+        async with http_client() as client:
+            feeds = await discover_feeds(body.url, client)
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Could not fetch URL: {exc}",
+        ) from exc
+    return envelope(feeds)
 
 
-@router.get("/{feed_url:path}", response_model=FeedResponse)
-async def get_feed(feed_url: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
-    feed = graph.get_feed(feed_url)
-    if feed is None:
+@router.get("")
+async def list_feeds(graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+    config = effective_config(graph)
+    return envelope([feed_response(f, config) for f in graph.list_feeds()])
+
+
+@router.get("/{feed_id}")
+async def get_feed(feed_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+    feed = _feed_or_404(graph, feed_id)
+    return envelope(feed_response(feed, effective_config(graph)))
+
+
+@router.patch("/{feed_id}")
+async def update_feed(
+    feed_id: str, body: FeedUpdate, graph: GraphService = Depends(get_graph)
+) -> dict[str, Any]:
+    updated = graph.update_feed(feed_id, body.model_dump(exclude_unset=True))
+    if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feed not found")
-    return feed
+    return envelope(feed_response(updated, effective_config(graph)))
 
 
-@router.delete("/{feed_url:path}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_feed(feed_url: str, graph: GraphService = Depends(get_graph)) -> None:
-    if not graph.delete_feed(feed_url):
+@router.delete("/{feed_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_feed(feed_id: str, graph: GraphService = Depends(get_graph)) -> None:
+    if not graph.delete_feed(feed_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feed not found")
+
+
+@router.post("/{feed_id}/refresh", status_code=status.HTTP_202_ACCEPTED)
+async def refresh_feed(
+    feed_id: str,
+    graph: GraphService = Depends(get_graph),
+    poller: FeedPoller = Depends(get_poller),
+) -> dict[str, Any]:
+    feed = _feed_or_404(graph, feed_id)
+    await poller.refresh_feed(feed)
+    refreshed = graph.get_feed(feed_id)
+    assert refreshed is not None
+    return envelope(feed_response(refreshed, effective_config(graph)))
+
+
+@router.get("/{feed_id}/items")
+async def feed_items(
+    feed_id: str,
+    unread: bool = False,
+    starred: bool = False,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    graph: GraphService = Depends(get_graph),
+) -> dict[str, Any]:
+    if not graph.feed_exists_by_id(feed_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feed not found")
+    items, total = graph.list_items(
+        feed_id=feed_id,
+        unread_only=unread,
+        starred_only=starred,
+        limit=limit,
+        offset=offset,
+    )
+    return paginated([item_list_response(i) for i in items], total, offset)

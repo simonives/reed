@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Simon Ives and contributors
 
+from __future__ import annotations
+
 from functools import lru_cache
+from typing import TYPE_CHECKING, Any
 
 from pydantic_settings import BaseSettings
+
+if TYPE_CHECKING:
+    from .graph import GraphService
 
 
 class Settings(BaseSettings):
@@ -22,3 +28,42 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+# Runtime-editable config (PATCH /api/v1/config), stored in Kuzu. Environment
+# settings provide the defaults; stored values override them.
+CONFIG_DEFAULTS = {
+    "reader_mode_enabled": True,
+    "default_theme": "system",
+    "items_per_page": 50,
+    "mark_read_on_open": True,
+}
+
+
+def effective_config(graph: GraphService) -> dict[str, Any]:
+    stored = graph.get_config_values()
+    defaults: dict[str, Any] = {
+        "default_poll_interval_minutes": get_settings().poll_default_interval,
+        **CONFIG_DEFAULTS,
+    }
+    return {key: stored.get(key, default) for key, default in defaults.items()}
+
+
+def effective_feed_settings(feed: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve per-feed overrides against global config.
+
+    The poller and the API serialiser both use this, so what the API reports
+    as effective_* is always what the poller actually applies.
+    """
+    interval = feed.get("poll_interval_minutes")
+    reader_mode = feed.get("reader_mode_enabled")
+    return {
+        "poll_interval_minutes": (
+            int(str(interval)) if interval else int(config["default_poll_interval_minutes"])
+        ),
+        "reader_mode_enabled": (
+            bool(reader_mode)
+            if reader_mode is not None
+            else bool(config["reader_mode_enabled"])
+        ),
+    }

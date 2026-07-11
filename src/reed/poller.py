@@ -7,15 +7,23 @@ import asyncio
 import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import feedparser
 import httpx
 
+from .config import effective_config, effective_feed_settings
 from .graph import GraphService
+from .http import http_client
+from .reader import extract_article
+from .text import word_count
 
 logger = logging.getLogger(__name__)
 
-_USER_AGENT = "Reed RSS Reader/0.1 (+https://github.com/simonives/reed)"
+# Caps on reader-mode extraction per feed per poll cycle, so one busy feed
+# cannot stall the polling loop.
+_MAX_EXTRACTIONS_PER_POLL = 10
+_EXTRACTION_CONCURRENCY = 4
 
 
 class FeedPoller:
@@ -28,11 +36,7 @@ class FeedPoller:
 
     async def start(self) -> None:
         self._running = True
-        self._http = httpx.AsyncClient(
-            timeout=30,
-            follow_redirects=True,
-            headers={"User-Agent": _USER_AGENT},
-        )
+        self._http = http_client()
         logger.info("Feed poller started")
         try:
             while self._running:
@@ -44,17 +48,29 @@ class FeedPoller:
     async def stop(self) -> None:
         self._running = False
 
-    async def _poll_due_feeds(self) -> None:
+    async def refresh_feed(self, feed: dict[str, Any]) -> None:
+        """Poll a single feed immediately (POST /feeds/{id}/refresh)."""
+        config = effective_config(self._graph)
         now = datetime.now(UTC)
+        if self._http is not None:
+            await self._poll_feed(feed, now, self._http, config)
+        else:
+            async with http_client() as client:
+                await self._poll_feed(feed, now, client, config)
+
+    async def _poll_due_feeds(self) -> None:
+        assert self._http is not None
+        now = datetime.now(UTC)
+        config = effective_config(self._graph)
         feeds = self._graph.list_feeds_for_polling()
-        due = [f for f in feeds if self._is_due(f, now)]
+        due = [f for f in feeds if self._is_due(f, now, config)]
         if not due:
             return
         logger.debug("Polling %d due feed(s)", len(due))
         for feed in due:
-            await self._poll_feed(feed, now)
+            await self._poll_feed(feed, now, self._http, config)
 
-    def _is_due(self, feed: dict[str, object], now: datetime) -> bool:
+    def _is_due(self, feed: dict[str, Any], now: datetime, config: dict[str, Any]) -> bool:
         last_fetched = feed.get("last_fetched_at")
         if last_fetched is None:
             return True
@@ -62,12 +78,16 @@ class FeedPoller:
         # Kuzu returns timezone-naive datetimes; treat as UTC
         if last_fetched.tzinfo is None:
             last_fetched = last_fetched.replace(tzinfo=UTC)
-        interval_min = feed.get("poll_interval_minutes")
-        interval = timedelta(minutes=int(str(interval_min)) if interval_min else 60)
-        return bool(now >= last_fetched + interval)
+        interval_min = effective_feed_settings(feed, config)["poll_interval_minutes"]
+        return bool(now >= last_fetched + timedelta(minutes=interval_min))
 
-    async def _poll_feed(self, feed: dict[str, object], now: datetime) -> None:
-        assert self._http is not None
+    async def _poll_feed(
+        self,
+        feed: dict[str, Any],
+        now: datetime,
+        http: httpx.AsyncClient,
+        config: dict[str, Any],
+    ) -> None:
         url = str(feed["url"])
         headers: dict[str, str] = {}
         if feed.get("etag"):
@@ -76,7 +96,7 @@ class FeedPoller:
             headers["If-Modified-Since"] = str(feed["last_modified"])
 
         try:
-            response = await self._http.get(url, headers=headers)
+            response = await http.get(url, headers=headers)
 
             if response.status_code == 304:
                 self._graph.update_feed_poll_metadata(
@@ -94,9 +114,12 @@ class FeedPoller:
             etag = response.headers.get("ETag")
             last_modified = response.headers.get("Last-Modified")
 
-            new_count = self._ingest_entries(url, response.content, now)
+            new_items = self._ingest_entries(url, response.content, now)
             self._graph.update_feed_poll_metadata(url, now, etag, last_modified, None)
-            logger.info("Polled %s: %d new item(s)", url, new_count)
+            logger.info("Polled %s: %d new item(s)", url, len(new_items))
+
+            if new_items and effective_feed_settings(feed, config)["reader_mode_enabled"]:
+                await self._extract_new_items(new_items, http)
 
         except Exception as exc:
             error = str(exc)[:500]
@@ -109,9 +132,31 @@ class FeedPoller:
                 error,
             )
 
-    def _ingest_entries(self, feed_url: str, content: bytes, fetched_at: datetime) -> int:
+    async def _extract_new_items(
+        self, new_items: list[tuple[str, str]], http: httpx.AsyncClient
+    ) -> None:
+        semaphore = asyncio.Semaphore(_EXTRACTION_CONCURRENCY)
+
+        async def extract_one(item_id: str, item_url: str) -> None:
+            async with semaphore:
+                content = await extract_article(item_url, http)
+            if content:
+                self._graph.save_reader_content(item_id, content, datetime.now(UTC))
+
+        await asyncio.gather(
+            *(
+                extract_one(item_id, item_url)
+                for item_id, item_url in new_items[:_MAX_EXTRACTIONS_PER_POLL]
+                if item_url
+            )
+        )
+
+    def _ingest_entries(
+        self, feed_url: str, content: bytes, fetched_at: datetime
+    ) -> list[tuple[str, str]]:
+        """Ingest feed entries; returns (item_id, item_url) for each new item."""
         parsed = feedparser.parse(content)
-        new_count = 0
+        new_items: list[tuple[str, str]] = []
         for entry in parsed.entries:
             guid = entry.get("id") or entry.get("link") or entry.get("title", "")
             if not guid:
@@ -119,6 +164,7 @@ class FeedPoller:
             item_url = entry.get("link", "")
             title = entry.get("title", "")
             summary = entry.get("summary", "")
+            author = entry.get("author", "")
             content_html = ""
             if entry.get("content"):
                 content_html = entry.content[0].get("value", "")
@@ -128,16 +174,18 @@ class FeedPoller:
                 with contextlib.suppress(ValueError, TypeError):
                     published_at = datetime(tp[0], tp[1], tp[2], tp[3], tp[4], tp[5], tzinfo=UTC)
 
-            created = self._graph.create_item(
+            item_id = self._graph.create_item(
                 feed_url=feed_url,
                 guid=guid,
                 url=item_url,
                 title=title,
                 summary=summary,
                 content=content_html,
+                author=author,
+                word_count=word_count(content_html or summary),
                 published_at=published_at,
                 fetched_at=fetched_at,
             )
-            if created:
-                new_count += 1
-        return new_count
+            if item_id is not None:
+                new_items.append((item_id, item_url))
+        return new_items

@@ -13,8 +13,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from .api.config import router as config_router
+from .api.errors import register_error_handlers
 from .api.feeds import router as feeds_router
 from .api.items import router as items_router
+from .api.tags import router as tags_router
 from .config import get_settings
 from .graph import GraphService
 from .poller import FeedPoller
@@ -35,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.graph = _graph
 
     _poller = FeedPoller(_graph)
+    app.state.poller = _poller
     _poller_task = asyncio.create_task(_poller.start())
 
     logger.info("Reed started")
@@ -59,8 +63,12 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    register_error_handlers(app)
+
     app.include_router(feeds_router)
     app.include_router(items_router)
+    app.include_router(tags_router)
+    app.include_router(config_router)
 
     frontend_dist = Path(get_settings().frontend_path)
     if frontend_dist.exists():
