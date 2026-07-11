@@ -6,6 +6,10 @@ A self-hosted, open-source RSS reader with a graph-native data model, public RES
 
 Reed is a single-user, self-hosted RSS reader built for simplicity and developer access. It uses a graph database ([Kuzu](https://kuzudb.com)) to model relationships between feeds, articles, authors, topics, and tags — making it traversable by AI tools via a built-in MCP server.
 
+## Why I built Reed
+
+I originally built Reed because my daily routines around my second brain did not have a neat and frictionless mechanism for incorproating a review and engagement task within my agentic workflow. I had my RSS feeds in a web-based application, however decent API access required a paid subscription. Further, the structures and interfaces of this application, and the competitors I was aware of (both FOSS and commercial) weren't built for an AI first, or AI at all, workflow. So I decided to build reed. I built a working prototype over a weekend with a vew to building something that [iterate with Claude here to build a compelling story].
+
 ## Status
 
 Active development — M0 scaffold complete. The Python package, Vue 3 frontend skeleton, Dockerfile, and CI pipeline are in place. Working towards M1: feed polling, graph schema, and the first real API endpoints.
