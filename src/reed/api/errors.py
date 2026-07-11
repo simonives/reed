@@ -35,11 +35,15 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # Pydantic v2 includes non-serializable objects in "ctx" (the original
+        # exception) and a "url" docs link — strip both before JSON encoding.
+        errors = [
+            {k: v for k, v in e.items() if k not in ("ctx", "url")}
+            for e in exc.errors()
+        ]
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content=_error_body(
-                "VALIDATION_ERROR",
-                "Request validation failed.",
-                {"errors": exc.errors()},
+                "VALIDATION_ERROR", "Request validation failed.", {"errors": errors}
             ),
         )

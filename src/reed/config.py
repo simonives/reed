@@ -59,7 +59,9 @@ def effective_feed_settings(feed: dict[str, Any], config: dict[str, Any]) -> dic
     reader_mode = feed.get("reader_mode_enabled")
     return {
         "poll_interval_minutes": (
-            int(str(interval)) if interval else int(config["default_poll_interval_minutes"])
+            int(str(interval))
+            if interval is not None
+            else int(config["default_poll_interval_minutes"])
         ),
         "reader_mode_enabled": (
             bool(reader_mode)

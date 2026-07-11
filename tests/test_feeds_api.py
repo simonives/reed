@@ -70,6 +70,28 @@ class TestSubscribe:
 
         assert r.status_code == 422
 
+    def test_whitespace_tag_returns_400(self, authed):
+        r = authed.post(
+            "/api/v1/feeds",
+            json={"url": "https://example.com/feed.rss", "tags": [" "]},
+        )
+        assert r.status_code == 400
+        assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_negative_poll_interval_returns_400(self, authed):
+        r = authed.post(
+            "/api/v1/feeds",
+            json={"url": "https://example.com/feed.rss", "poll_interval_minutes": -5},
+        )
+        assert r.status_code == 400
+
+    def test_zero_poll_interval_returns_400(self, authed):
+        r = authed.post(
+            "/api/v1/feeds",
+            json={"url": "https://example.com/feed.rss", "poll_interval_minutes": 0},
+        )
+        assert r.status_code == 400
+
 
 class TestListFeeds:
     def test_empty_list(self, authed):
@@ -128,6 +150,19 @@ class TestUpdateFeed:
     def test_patch_unknown_returns_404(self, authed):
         r = authed.patch("/api/v1/feeds/no-such-id", json={"display_name": "X"})
         assert r.status_code == 404
+
+    def test_patch_whitespace_tag_returns_400(self, authed, subscribed_feed):
+        r = authed.patch(
+            f"/api/v1/feeds/{subscribed_feed['id']}", json={"tags": ["  "]}
+        )
+        assert r.status_code == 400
+        assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_patch_negative_poll_interval_returns_400(self, authed, subscribed_feed):
+        r = authed.patch(
+            f"/api/v1/feeds/{subscribed_feed['id']}", json={"poll_interval_minutes": -1}
+        )
+        assert r.status_code == 400
 
 
 class TestDeleteFeed:

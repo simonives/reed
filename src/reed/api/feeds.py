@@ -9,7 +9,7 @@ from typing import Any
 import feedparser
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from ..config import effective_config
 from ..discovery import discover_feeds
@@ -28,19 +28,38 @@ router = APIRouter(
 )
 
 
+def _clean_tags(v: list[str] | None) -> list[str] | None:
+    if v is None:
+        return v
+    cleaned = [t.strip() for t in v]
+    if any(not t for t in cleaned):
+        raise ValueError("tag names must not be empty or whitespace")
+    return cleaned
+
+
 class FeedCreate(BaseModel):
     url: str
     display_name: str | None = None
     tags: list[str] = []
-    poll_interval_minutes: int | None = None  # None = inherit global default
+    poll_interval_minutes: int | None = Field(default=None, ge=1)
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: list[str]) -> list[str]:
+        return _clean_tags(v) or []
 
 
 class FeedUpdate(BaseModel):
     display_name: str | None = None
-    poll_interval_minutes: int | None = None
+    poll_interval_minutes: int | None = Field(default=None, ge=1)
     reader_mode_enabled: bool | None = None
     is_active: bool | None = None
     tags: list[str] | None = None
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: list[str] | None) -> list[str] | None:
+        return _clean_tags(v)
 
 
 class DiscoverRequest(BaseModel):
