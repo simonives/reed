@@ -1,8 +1,8 @@
 # Reed
 
-[![Licence](https://img.shields.io/badge/Licence-AGPL_3.0-blue.svg)](https://github.com/simonives/reed/blob/main/LICENSE) ![Python Version](https://img.shields.
-  io/badge/python-3.11+-blue.svg) [![CI Status](https://github.com/simonives/reed/actions/workflows/ci.yml/badge.svg)](https://github.com/simonives/reed/actions/workflows/ci.
-  yml) ![Version](https://img.shields.io/badge/version-M1-blue.svg)
+[![Licence](https://img.shields.io/badge/Licence-AGPL_3.0-blue.svg)](https://github.com/simonives/reed/blob/main/LICENSE)
+![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)
+[![CI Status](https://github.com/simonives/reed/actions/workflows/ci.yml/badge.svg)](https://github.com/simonives/reed/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-M1-blue.svg)
 
 A self-hosted, open-source RSS reader with a graph-native data model, public REST API, and first-class MCP server.
 
