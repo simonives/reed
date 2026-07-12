@@ -70,6 +70,12 @@ class TestSubscribe:
 
         assert r.status_code == 422
 
+    def test_rejects_private_url_returns_422(self, authed):
+        # SSRF guard: a feed URL resolving to a private/loopback address is
+        # refused before any body is fetched.
+        r = authed.post("/api/v1/feeds", json={"url": "http://127.0.0.1:9/feed"})
+        assert r.status_code == 422
+
     def test_whitespace_tag_returns_400(self, authed):
         r = authed.post(
             "/api/v1/feeds",
@@ -204,6 +210,7 @@ class TestDiscover:
         resp.text = self.HTML.decode()
         resp.url = "https://example.com/"
         resp.headers = {"Content-Type": "text/html"}
+        resp.is_redirect = False
         resp.raise_for_status = MagicMock()
 
         with patched_feed_fetch(response=resp):
@@ -224,6 +231,7 @@ class TestDiscover:
         resp.text = '<?xml version="1.0"?><rss version="2.0"></rss>'
         resp.url = "https://example.com/feed.xml"
         resp.headers = {"Content-Type": "application/rss+xml"}
+        resp.is_redirect = False
         resp.raise_for_status = MagicMock()
 
         with patched_feed_fetch(response=resp):

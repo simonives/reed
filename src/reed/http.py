@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import socket
@@ -23,10 +24,11 @@ class UnsafeURLError(Exception):
 def http_client() -> httpx.AsyncClient:
     """Shared outbound HTTP client policy: timeout, redirects, user agent.
 
-    Used for feed and website fetches where the URL is chosen by the
-    authenticated user. For fetches of untrusted, feed-author-controlled URLs
-    (reader-mode article extraction), use safe_get instead, which blocks
-    requests to private address ranges.
+    This client must only be used together with safe_get, which performs the
+    SSRF checks and follows redirects manually. Every outbound fetch in Reed
+    (feeds, discovery, reader extraction) targets a URL that is ultimately
+    third-party controlled — directly (feed authors' article links) or via a
+    redirect from a user-supplied URL — so all of them go through safe_get.
     """
     return httpx.AsyncClient(
         timeout=30,
@@ -35,15 +37,17 @@ def http_client() -> httpx.AsyncClient:
     )
 
 
-def _resolve_is_safe(host: str) -> bool:
+async def _resolve_is_safe(host: str) -> bool:
     """Return True only if every address the host resolves to is public.
 
     Rejecting on any private/loopback/link-local/reserved result prevents a
     DNS-rebinding-style bypass where one A record is public and another is
-    internal.
+    internal. Resolution runs through the loop's async resolver so a slow DNS
+    server cannot block the event loop.
     """
+    loop = asyncio.get_running_loop()
     try:
-        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+        infos = await loop.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
         return False
     for info in infos:
@@ -64,28 +68,31 @@ def _resolve_is_safe(host: str) -> bool:
     return True
 
 
-def _require_safe_url(url: httpx.URL) -> None:
+async def _require_safe_url(url: httpx.URL) -> None:
     if url.scheme not in ("http", "https"):
         raise UnsafeURLError(f"Disallowed scheme: {url.scheme!r}")
     if not url.host:
         raise UnsafeURLError("URL has no host")
-    if not _resolve_is_safe(url.host):
+    if not await _resolve_is_safe(url.host):
         raise UnsafeURLError(f"Host resolves to a private or reserved address: {url.host}")
 
 
-async def safe_get(client: httpx.AsyncClient, url: str) -> httpx.Response:
+async def safe_get(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
     """GET a URL from an untrusted source, blocking SSRF to internal hosts.
 
     Redirects are followed manually so each hop's resolved address is
     validated before the request is made. The client must not follow
-    redirects itself (http_client does, so pass a request-scoped client or
-    accept that the shared client's own redirects are unchecked — callers in
-    Reed use this with the shared client only for the first hop).
+    redirects itself; this passes follow_redirects=False per request.
     """
     current = httpx.URL(url)
     for _ in range(_MAX_REDIRECTS):
-        _require_safe_url(current)
-        response = await client.get(current, follow_redirects=False)
+        await _require_safe_url(current)
+        response = await client.get(current, headers=headers, follow_redirects=False)
         location = response.headers.get("Location")
         if not response.is_redirect or not location:
             return response

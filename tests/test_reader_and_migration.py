@@ -72,8 +72,9 @@ class TestSSRFGuard:
         )
         client = AsyncMock()
         client.get = AsyncMock(return_value=redirect)
+        resolve_public = AsyncMock(side_effect=lambda host: host == "example.com")
         with (
-            patch("reed.http._resolve_is_safe", lambda host: host == "example.com"),
+            patch("reed.http._resolve_is_safe", resolve_public),
             pytest.raises(UnsafeURLError),
         ):
             await safe_get(client, "https://example.com/")
@@ -84,7 +85,7 @@ class TestSSRFGuard:
         ok = httpx.Response(200, request=httpx.Request("GET", "https://example.com/"))
         client = AsyncMock()
         client.get = AsyncMock(return_value=ok)
-        with patch("reed.http._resolve_is_safe", lambda host: True):
+        with patch("reed.http._resolve_is_safe", AsyncMock(return_value=True)):
             response = await safe_get(client, "https://example.com/")
         assert response.status_code == 200
 

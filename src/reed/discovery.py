@@ -9,6 +9,8 @@ from urllib.parse import urljoin
 
 import httpx
 
+from .http import safe_get
+
 logger = logging.getLogger(__name__)
 
 _FEED_MIME_TYPES = {
@@ -55,7 +57,7 @@ async def discover_feeds(url: str, http: httpx.AsyncClient) -> list[dict[str, st
 
     If the URL is itself a feed, it is returned as the single result.
     """
-    response = await http.get(url)
+    response = await safe_get(http, url)
     response.raise_for_status()
     content_type = response.headers.get("Content-Type", "").lower()
     body = response.text

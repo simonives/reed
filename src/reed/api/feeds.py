@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 from ..config import effective_config
 from ..discovery import discover_feeds
 from ..graph import GraphService
-from ..http import http_client
+from ..http import UnsafeURLError, http_client, safe_get
 from ..poller import FeedPoller
 from .deps import get_graph, get_poller, require_api_key
 from .schemas import envelope, feed_response, item_list_response, paginated
@@ -80,8 +80,13 @@ async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) 
 
     try:
         async with http_client() as client:
-            response = await client.get(body.url)
+            response = await safe_get(client, body.url)
         response.raise_for_status()
+    except UnsafeURLError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Refusing to fetch feed: {exc}",
+        ) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -108,6 +113,11 @@ async def discover(body: DiscoverRequest) -> dict[str, Any]:
     try:
         async with http_client() as client:
             feeds = await discover_feeds(body.url, client)
+    except UnsafeURLError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Refusing to fetch URL: {exc}",
+        ) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -39,13 +39,19 @@ def mock_http_response(content: bytes = SAMPLE_RSS, status_code: int = 200):
     resp = MagicMock()
     resp.status_code = status_code
     resp.content = content
+    resp.is_redirect = False  # safe_get returns non-redirects directly
     resp.raise_for_status = MagicMock()
     return resp
 
 
 @contextmanager
 def patched_feed_fetch(response=None, side_effect=None):
-    """Patch the outbound HTTP fetch used by POST /feeds and /feeds/discover."""
+    """Patch the outbound HTTP fetch used by POST /feeds and /feeds/discover.
+
+    safe_get resolves the host before fetching, so the SSRF resolver is stubbed
+    to keep these tests hermetic (no real DNS); the host-blocking behaviour is
+    exercised separately in TestSSRFGuard.
+    """
     mock_client = AsyncMock()
     if side_effect is not None:
         mock_client.get = AsyncMock(side_effect=side_effect)
@@ -54,7 +60,10 @@ def patched_feed_fetch(response=None, side_effect=None):
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=mock_client)
     cm.__aexit__ = AsyncMock(return_value=False)
-    with patch("reed.api.feeds.http_client", return_value=cm):
+    with (
+        patch("reed.api.feeds.http_client", return_value=cm),
+        patch("reed.http._resolve_is_safe", AsyncMock(return_value=True)),
+    ):
         yield mock_client
 
 

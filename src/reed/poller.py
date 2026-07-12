@@ -14,7 +14,7 @@ import httpx
 
 from .config import effective_config, effective_feed_settings
 from .graph import GraphService
-from .http import http_client
+from .http import http_client, safe_get
 from .reader import extract_article
 from .text import word_count
 
@@ -96,7 +96,9 @@ class FeedPoller:
             headers["If-Modified-Since"] = str(feed["last_modified"])
 
         try:
-            response = await http.get(url, headers=headers)
+            # safe_get blocks SSRF: a feed (or a redirect from one) must not
+            # reach a private or link-local address such as cloud metadata.
+            response = await safe_get(http, url, headers=headers)
 
             if response.status_code == 304:
                 self._graph.update_feed_poll_metadata(
