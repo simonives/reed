@@ -1,0 +1,150 @@
+/* Reset + global layout. Component-specific styling lives in each .vue file. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-family-ui);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* Visible focus indicators everywhere (principles.md §7 — never suppressed) */
+:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+/* Screen-reader-only helper */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Small reusable button style for action bars */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+  text-decoration: none;
+}
+
+.btn--active {
+  color: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
+.btn--primary {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: var(--accent-contrast);
+}
+
+.kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 1px var(--space-1);
+  text-align: center;
+  font-family: var(--font-family-ui);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+/* Small square icon button used in the sidebar and view-header chrome. */
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+}
+
+/* Horizontal action bar under an article. */
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* List loading/empty/error message and the "load more" affordance, shared by
+   the three-pane item list and the river stream. */
+.list-state {
+  padding: var(--space-5) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.list-state--error {
+  color: var(--color-danger);
+}
+
+.load-more {
+  width: 100%;
+  padding: var(--space-3);
+  color: var(--accent-color);
+  font-size: var(--font-size-sm);
+}
+
+.load-more:hover {
+  background: var(--bg-hover);
+}

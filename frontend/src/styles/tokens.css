@@ -1,0 +1,70 @@
+/*
+ * Design tokens. Both themes share typography, spacing, and layout; only the
+ * colour palette differs (principles.md §6). The appearance variables at the
+ * bottom are the v1 user-exposed controls (principles.md §9) — defaults live
+ * here; the Settings UI that overrides them lands in the management branch.
+ */
+
+:root {
+  /* Appearance controls — overridable per user (injected onto :root at runtime) */
+  --accent-color: #3b82f6;
+  --font-size-base: 16px;
+  --reading-width: 760px;
+  --line-height: 1.65;
+  --font-family-reading: system-ui, sans-serif;
+
+  /* Typography */
+  --font-family-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-size-sm: 0.8125rem;
+  --font-size-xs: 0.75rem;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Layout */
+  --sidebar-width: 260px;
+  --itemlist-width: 380px;
+  --radius: 6px;
+
+  /* Semantic accents (readable on both themes) */
+  --color-danger: #dc2626;
+  --color-star: #f59e0b;
+}
+
+/* Light theme (default) */
+:root,
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-subtle: #f6f7f8;
+  --bg-raised: #ffffff;
+  --bg-selected: #e8f0fe;
+  --bg-hover: #f0f1f3;
+  --border: #e2e4e8;
+  --border-strong: #cfd2d8;
+  --text: #1a1c1e;
+  --text-secondary: #5b5f66;
+  --text-muted: #8b8f96;
+  --accent-contrast: #ffffff;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* Dark theme */
+:root[data-theme="dark"] {
+  --bg: #0f0f10;
+  --bg-subtle: #17181a;
+  --bg-raised: #1d1f22;
+  --bg-selected: #1e2b45;
+  --bg-hover: #232528;
+  --border: #2a2d31;
+  --border-strong: #3a3e44;
+  --text: #e8e8ea;
+  --text-secondary: #a8acb3;
+  --text-muted: #71757c;
+  --accent-contrast: #ffffff;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+}
