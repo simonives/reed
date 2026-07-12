@@ -18,7 +18,10 @@ dependencies = [
     "kuzu>=0.7",
     "fastmcp>=2.0",
     "feedparser>=6.0",
-    "httpx>=0.27",
+    # http.py builds a pinned transport on httpx/httpcore internals (an SSRF
+    # guard); pin both so an upgrade that moves them is caught, not silent.
+    "httpx>=0.27,<0.29",
+    "httpcore>=1.0,<2",
     "trafilatura>=1.12",
     "yake>=0.4",
     "python-multipart>=0.0.12",

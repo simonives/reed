@@ -3,14 +3,24 @@
 
 from __future__ import annotations
 
+import asyncio
+import socket
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import kuzu
 import pytest
 
 from reed.graph import GraphService
-from reed.http import UnsafeURLError, safe_get
+from reed.http import (
+    UnsafeURLError,
+    _PinnedResolverBackend,
+    _PinnedTransport,
+    _resolve_safe_ips,
+    http_client,
+    safe_get,
+)
 
 
 def _first_item_id(authed):
@@ -95,6 +105,129 @@ class TestSSRFGuard:
 
         result = await extract_article("http://169.254.169.254/", http=AsyncMock())
         assert result is None
+
+
+class TestPinnedResolver:
+    """The connection-level DNS-rebinding guard (#29) and its follow-ups."""
+
+    async def test_resolve_safe_ips_returns_public_literal(self):
+        assert await _resolve_safe_ips("8.8.8.8") == ["8.8.8.8"]
+
+    async def test_resolve_safe_ips_rejects_loopback(self):
+        with pytest.raises(UnsafeURLError):
+            await _resolve_safe_ips("127.0.0.1")
+
+    async def test_resolve_safe_ips_rejects_private(self):
+        with pytest.raises(UnsafeURLError):
+            await _resolve_safe_ips("10.0.0.1")
+
+    async def test_resolve_safe_ips_rejects_if_any_address_private(self):
+        # Split-horizon: one public + one private answer is refused wholesale.
+        infos = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0)),
+        ]
+
+        async def fake_getaddrinfo(*args, **kwargs):
+            return infos
+
+        loop = asyncio.get_running_loop()
+        with (
+            patch.object(loop, "getaddrinfo", fake_getaddrinfo),
+            pytest.raises(UnsafeURLError),
+        ):
+            await _resolve_safe_ips("rebind.example")
+
+    async def test_pinned_client_blocks_private_at_connect(self):
+        """The pooled client refuses a private host at the connection layer,
+        even without going through safe_get's pre-check."""
+        async with http_client() as client:
+            with pytest.raises(UnsafeURLError):
+                await client.get("http://127.0.0.1:9/")
+
+    async def test_connect_tcp_tries_each_validated_address(self):
+        """#47: fall back across validated addresses. The first raises a connect
+        *timeout* (the dead-AAAA-on-IPv4-only symptom) and the second a connect
+        *error* — both are siblings that must be skipped, not just ConnectError.
+        """
+        import httpcore
+
+        backend = _PinnedResolverBackend()
+        candidates = ["93.184.216.34", "93.184.216.35", "93.184.216.36"]
+        attempts: list[str] = []
+        sentinel = object()
+
+        async def fake_super_connect(self, host, port, **kwargs):
+            attempts.append(host)
+            if host == candidates[0]:
+                raise httpcore.ConnectTimeout("timed out")
+            if host == candidates[1]:
+                raise httpcore.ConnectError("Network is unreachable")
+            return sentinel
+
+        with (
+            patch("reed.http._resolve_safe_ips", AsyncMock(return_value=candidates)),
+            patch("httpcore.AnyIOBackend.connect_tcp", fake_super_connect),
+        ):
+            result = await backend.connect_tcp("example.com", 443, timeout=5)
+
+        assert result is sentinel
+        assert attempts == candidates
+
+    async def test_resolve_safe_ips_rejects_ipv6_loopback(self):
+        with pytest.raises(UnsafeURLError):
+            await _resolve_safe_ips("::1")
+
+    async def test_pinned_transport_connects_to_validated_ip(self):
+        """End-to-end through http_client()'s transport -> pool -> backend: the
+        connection targets the exact IP _resolve_safe_ips returned, not a
+        re-resolved hostname. This is the core anti-rebinding guarantee, and it
+        exercises the real transport wiring (not the backend in isolation)."""
+        import httpcore
+
+        connected: list[str] = []
+
+        async def fake_connect(self, host, port, **kwargs):
+            connected.append(host)
+            raise httpcore.ConnectError("stop before opening a real socket")
+
+        with (
+            patch("reed.http._resolve_safe_ips", AsyncMock(return_value=["93.184.216.34"])),
+            patch("httpcore.AnyIOBackend.connect_tcp", fake_connect),
+        ):
+            async with http_client() as client:
+                with pytest.raises(httpx.ConnectError):
+                    await client.get("https://feed.example/")
+
+        assert connected == ["93.184.216.34"]
+
+    async def test_connect_tcp_times_out_slow_resolver(self):
+        """#48: a resolver that never answers is bounded by the connect timeout."""
+        import httpcore
+
+        async def never_answers(host):
+            await asyncio.sleep(10)
+            return ["93.184.216.34"]
+
+        backend = _PinnedResolverBackend()
+        with (
+            patch("reed.http._resolve_safe_ips", never_answers),
+            pytest.raises(httpcore.ConnectTimeout),
+        ):
+            await backend.connect_tcp("slow.example", 443, timeout=0.05)
+
+    async def test_env_proxy_honoured_direct_stays_pinned(self, monkeypatch):
+        """#49: HTTP_PROXY routes through an unpinned proxy transport; NO_PROXY
+        hosts fall back to the pinned direct transport."""
+        monkeypatch.setenv("HTTP_PROXY", "http://proxy.internal:3128")
+        monkeypatch.setenv("NO_PROXY", "direct.example")
+        async with http_client() as client:
+            assert isinstance(client._transport, _PinnedTransport)
+            direct = client._transport_for_url(httpx.URL("http://direct.example/"))
+            proxied = client._transport_for_url(httpx.URL("http://feed.example/"))
+            assert isinstance(direct, _PinnedTransport)  # NO_PROXY -> pinned
+            assert proxied is not client._transport  # goes via the proxy mount
+            assert not isinstance(proxied, _PinnedTransport)
 
 
 class TestRefreshEndpoint:
