@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import httpx
 
+from reed.http import UnsafeURLError
+
 from .conftest import patched_feed_fetch
 
 
@@ -241,3 +243,17 @@ class TestDiscover:
 
         assert r.status_code == 200
         assert r.json()["data"][0]["url"] == "https://example.com/feed.xml"
+
+
+class TestFetchErrorHandling:
+    def test_subscribe_unreachable_message(self, authed):
+        with patched_feed_fetch(side_effect=httpx.ConnectError("boom")):
+            r = authed.post("/api/v1/feeds", json={"url": "https://x.example/feed"})
+        assert r.status_code == 422
+        assert r.json()["error"]["message"].startswith("Could not fetch:")
+
+    def test_subscribe_ssrf_message(self, authed):
+        with patched_feed_fetch(side_effect=UnsafeURLError("Host resolves to a private or reserved address: x")):
+            r = authed.post("/api/v1/feeds", json={"url": "https://x.example/feed"})
+        assert r.status_code == 422
+        assert r.json()["error"]["message"].startswith("Refusing to fetch:")

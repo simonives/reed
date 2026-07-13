@@ -21,6 +21,22 @@ from .schemas import envelope, feed_response, item_list_response, paginated
 
 logger = logging.getLogger(__name__)
 
+
+def _fetch_error_422(exc: Exception) -> HTTPException:
+    """One place to map an outbound-fetch failure to a 422.
+
+    UnsafeURLError is an SSRF refusal ("Refusing to fetch"); any other
+    httpx.HTTPError is a plain fetch failure ("Could not fetch"). Keeping the
+    two endpoints on this single mapping means the next error class (timeout,
+    size limit) is classified once, not per endpoint (#46).
+    """
+    prefix = "Refusing to fetch" if isinstance(exc, UnsafeURLError) else "Could not fetch"
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=f"{prefix}: {exc}",
+    )
+
+
 router = APIRouter(
     prefix="/api/v1/feeds",
     tags=["feeds"],
@@ -82,16 +98,8 @@ async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) 
         async with http_client() as client:
             response = await safe_get(client, body.url)
         response.raise_for_status()
-    except UnsafeURLError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Refusing to fetch feed: {exc}",
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Could not fetch feed: {exc}",
-        ) from exc
+    except (UnsafeURLError, httpx.HTTPError) as exc:
+        raise _fetch_error_422(exc) from exc
 
     parsed = feedparser.parse(response.content)
     feed_meta = parsed.feed
@@ -113,16 +121,8 @@ async def discover(body: DiscoverRequest) -> dict[str, Any]:
     try:
         async with http_client() as client:
             feeds = await discover_feeds(body.url, client)
-    except UnsafeURLError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Refusing to fetch URL: {exc}",
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Could not fetch URL: {exc}",
-        ) from exc
+    except (UnsafeURLError, httpx.HTTPError) as exc:
+        raise _fetch_error_422(exc) from exc
     return envelope(feeds)
 
 

@@ -40,7 +40,7 @@ def http_client() -> httpx.AsyncClient:
     """
     return httpx.AsyncClient(
         timeout=30,
-        follow_redirects=True,
+        follow_redirects=False,
         headers={"User-Agent": USER_AGENT},
         transport=_PinnedTransport(),
         mounts=_env_proxy_mounts(),
@@ -103,25 +103,17 @@ async def _resolve_safe_ips(host: str) -> list[str]:
     return list(dict.fromkeys(addrs))
 
 
-async def _resolve_is_safe(host: str) -> bool:
-    """Fail-fast pre-check for safe_get. The connection-level guarantee against
-    DNS rebinding is _PinnedResolverBackend; this just avoids a connection
-    attempt (and gives a clean error) for an obviously-internal host.
-    """
-    try:
-        await _resolve_safe_ips(host)
-    except UnsafeURLError:
-        return False
-    return True
-
-
 async def _require_safe_url(url: httpx.URL) -> None:
+    """Fail-fast pre-check for safe_get. The connection-level guarantee against
+    DNS rebinding is _PinnedResolverBackend; this avoids a connection attempt
+    (and surfaces _resolve_safe_ips's specific message) for an obviously-internal
+    or unresolvable host.
+    """
     if url.scheme not in ("http", "https"):
         raise UnsafeURLError(f"Disallowed scheme: {url.scheme!r}")
     if not url.host:
         raise UnsafeURLError("URL has no host")
-    if not await _resolve_is_safe(url.host):
-        raise UnsafeURLError(f"Host resolves to a private or reserved address: {url.host}")
+    await _resolve_safe_ips(url.host)
 
 
 class _PinnedResolverBackend(httpcore.AnyIOBackend):

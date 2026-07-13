@@ -18,6 +18,7 @@ from reed.http import (
     UnsafeURLError,
     _PinnedResolverBackend,
     _PinnedTransport,
+    _require_safe_url,
     _resolve_safe_ips,
     http_client,
     safe_get,
@@ -26,6 +27,21 @@ from reed.http import (
 
 def _first_item_id(authed):
     return authed.get("/api/v1/items").json()["data"][0]["id"]
+
+
+def test_http_client_does_not_follow_redirects():
+    """The raw client must not auto-follow; safe_get drives redirects manually
+    so each hop is SSRF-revalidated (#45)."""
+    from reed.http import http_client
+
+    client = http_client()
+    try:
+        assert client.follow_redirects is False
+    finally:
+        # httpx.AsyncClient created outside an async context; close its transport.
+        import anyio
+
+        anyio.run(client.aclose)
 
 
 class TestExtractEndpoint:
@@ -83,9 +99,13 @@ class TestSSRFGuard:
         )
         client = AsyncMock()
         client.get = AsyncMock(return_value=redirect)
-        resolve_public = AsyncMock(side_effect=lambda host: host == "example.com")
+        async def resolve(host):
+            if host == "example.com":
+                return ["93.184.216.34"]
+            raise UnsafeURLError(f"Host resolves to a private or reserved address: {host}")
+
         with (
-            patch("reed.http._resolve_is_safe", resolve_public),
+            patch("reed.http._resolve_safe_ips", resolve),
             pytest.raises(UnsafeURLError),
         ):
             await safe_get(client, "https://example.com/")
@@ -96,9 +116,17 @@ class TestSSRFGuard:
         ok = httpx.Response(200, request=httpx.Request("GET", "https://example.com/"))
         client = AsyncMock()
         client.get = AsyncMock(return_value=ok)
-        with patch("reed.http._resolve_is_safe", AsyncMock(return_value=True)):
+        with patch("reed.http._resolve_safe_ips", AsyncMock(return_value=["93.184.216.34"])):
             response = await safe_get(client, "https://example.com/")
         assert response.status_code == 200
+
+    async def test_require_safe_url_propagates_specific_message(self):
+        with patch(
+            "reed.http._resolve_safe_ips",
+            AsyncMock(side_effect=UnsafeURLError("Host did not resolve: x.example")),
+        ):
+            with pytest.raises(UnsafeURLError, match="Host did not resolve"):
+                await _require_safe_url(httpx.URL("https://x.example/"))
 
     async def test_extract_article_blocks_ssrf(self):
         """extract_article returns None (not an error) for a blocked URL."""
@@ -457,3 +485,19 @@ class TestFreshSchema:
             finally:
                 graph.close()
         spy.assert_not_called()
+
+
+class TestColumnNamesAllowlist:
+    def test_known_table_returns_columns(self, tmp_path):
+        from reed.graph import GraphService
+
+        g = GraphService(str(tmp_path / "g.kuzu"))
+        cols = g._column_names("Item")
+        assert "guid" in cols
+
+    def test_unknown_table_raises(self, tmp_path):
+        from reed.graph import GraphService
+
+        g = GraphService(str(tmp_path / "g.kuzu"))
+        with pytest.raises(ValueError, match="Unknown table"):
+            g._column_names("Item') RETURN 1 --")

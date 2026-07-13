@@ -33,6 +33,13 @@ _ITEM_COLS = """
     i.reader_content AS reader_content
 """
 
+_ITEM_LIST_COLS = """
+    i.id AS id, i.guid AS guid, i.url AS url, i.title AS title,
+    i.summary AS summary, i.author AS author,
+    i.word_count AS word_count, i.published_at AS published_at,
+    i.fetched_at AS fetched_at, i.read AS read, i.starred AS starred
+"""
+
 
 def _rows(result: kuzu.QueryResult | list[kuzu.QueryResult]) -> list[dict[str, Any]]:
     if isinstance(result, list):
@@ -141,7 +148,11 @@ class GraphService:
         return {row["name"] for row in rows}
 
     def _column_names(self, table: str) -> set[str]:
-        # table is an internal constant, never user input
+        # table must be a real table name: every caller passes an internal
+        # constant, but interpolating it into the catalog call means a future
+        # non-constant caller would inject. Fail loudly instead (#56).
+        if table not in self._table_names():
+            raise ValueError(f"Unknown table: {table!r}")
         rows = _rows(self._conn.execute(f"CALL table_info('{table}') RETURN name"))
         return {row["name"] for row in rows}
 
@@ -578,7 +589,7 @@ class GraphService:
         result = self._conn.execute(
             f"""
             {prefix}
-            RETURN {_ITEM_COLS}, f.id AS feed_id,
+            RETURN {_ITEM_LIST_COLS}, f.id AS feed_id,
                    coalesce(f.display_name, f.title) AS feed_title
             ORDER BY coalesce(i.published_at, i.fetched_at) DESC
             SKIP $offset LIMIT $limit

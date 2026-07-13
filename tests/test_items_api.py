@@ -169,3 +169,22 @@ class TestOrphanedItems:
         assert [i["id"] for i in starred] == [starred_id]
         assert starred[0]["feed"] is None
         assert [i["id"] for i in _items(authed, "?tag=keep")] == [tagged_id]
+
+
+class TestListProjection:
+    def test_list_items_omits_body_columns(self, subscribed_feed, reed_client):
+        graph = reed_client.app.state.graph
+        items, total = graph.list_items()
+        assert total >= 1
+        assert "content" not in items[0]
+        assert "reader_content" not in items[0]
+        # sanity: the lean row still carries what the tag join and list serialiser need
+        assert "guid" in items[0]
+        assert "id" in items[0]
+
+    def test_get_item_includes_body_columns(self, subscribed_feed, reed_client):
+        graph = reed_client.app.state.graph
+        items, _ = graph.list_items()
+        full = graph.get_item(items[0]["id"])
+        assert "content" in full
+        assert "reader_content" in full

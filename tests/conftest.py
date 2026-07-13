@@ -62,7 +62,7 @@ def patched_feed_fetch(response=None, side_effect=None):
     cm.__aexit__ = AsyncMock(return_value=False)
     with (
         patch("reed.api.feeds.http_client", return_value=cm),
-        patch("reed.http._resolve_is_safe", AsyncMock(return_value=True)),
+        patch("reed.http._resolve_safe_ips", AsyncMock(return_value=["93.184.216.34"])),
     ):
         yield mock_client
 
