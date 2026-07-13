@@ -13,7 +13,7 @@ import kuzu
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _FEED_COLS = """
     f.id AS id, f.url AS url, f.title AS title, f.display_name AS display_name,
@@ -32,23 +32,6 @@ _ITEM_COLS = """
     i.fetched_at AS fetched_at, i.read AS read, i.starred AS starred,
     i.reader_content AS reader_content
 """
-
-# Columns added after M1; applied via ALTER TABLE for databases created before
-# schema version 2.
-_V2_MIGRATIONS = [
-    "ALTER TABLE Feed ADD id STRING",
-    "ALTER TABLE Feed ADD display_name STRING",
-    "ALTER TABLE Feed ADD subscribed_at TIMESTAMP",
-    "ALTER TABLE Feed ADD is_active BOOLEAN DEFAULT true",
-    "ALTER TABLE Feed ADD reader_mode_enabled BOOLEAN",
-    "ALTER TABLE Feed ADD consecutive_errors INT64 DEFAULT 0",
-    "ALTER TABLE Feed ADD last_error STRING",
-    "ALTER TABLE Item ADD id STRING",
-    "ALTER TABLE Item ADD author STRING",
-    "ALTER TABLE Item ADD word_count INT64 DEFAULT 0",
-    "ALTER TABLE Item ADD reader_content STRING",
-    "ALTER TABLE Item ADD reader_fetched_at TIMESTAMP",
-]
 
 
 def _rows(result: kuzu.QueryResult | list[kuzu.QueryResult]) -> list[dict[str, Any]]:
@@ -73,6 +56,19 @@ class GraphService:
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
+        tables = self._table_names()
+        fresh = "Feed" not in tables
+        if "Note" in tables and "item_id" in self._column_names("Note"):
+            self._conn.execute("ALTER TABLE Note RENAME TO _NoteLegacy")
+        self._init_schema()
+        if fresh:
+            self.set_config_value("schema_version", _SCHEMA_VERSION)
+            logger.debug("Fresh schema initialised at version %d", _SCHEMA_VERSION)
+            return
+        self._migrate()
+        logger.debug("Schema ready")
+
+    def _init_schema(self) -> None:
         self._conn.execute("""
             CREATE NODE TABLE IF NOT EXISTS Feed(
                 url STRING,
@@ -121,11 +117,11 @@ class GraphService:
         """)
         self._conn.execute("""
             CREATE NODE TABLE IF NOT EXISTS Note(
-                item_id STRING,
+                id STRING,
                 body STRING,
                 created_at TIMESTAMP,
                 updated_at TIMESTAMP,
-                PRIMARY KEY (item_id)
+                PRIMARY KEY (id)
             )
         """)
         self._conn.execute("""
@@ -138,25 +134,49 @@ class GraphService:
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS HAS_ITEM(FROM Feed TO Item)")
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS TAGGED(FROM Item TO Tag)")
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS FEED_TAGGED(FROM Feed TO Tag)")
-        self._migrate()
-        logger.debug("Schema ready")
+        self._conn.execute("CREATE REL TABLE IF NOT EXISTS HAS_NOTE(FROM Item TO Note)")
+
+    def _table_names(self) -> set[str]:
+        rows = _rows(self._conn.execute("CALL show_tables() RETURN name"))
+        return {row["name"] for row in rows}
+
+    def _column_names(self, table: str) -> set[str]:
+        # table is an internal constant, never user input
+        rows = _rows(self._conn.execute(f"CALL table_info('{table}') RETURN name"))
+        return {row["name"] for row in rows}
 
     def _migrate(self) -> None:
-        version = self.get_config_values().get("schema_version", 1)
-        if version >= _SCHEMA_VERSION:
+        stored = self.get_config_values().get("schema_version", 1)
+        if stored >= _SCHEMA_VERSION:
             return
-        for ddl in _V2_MIGRATIONS:
-            try:
-                self._conn.execute(ddl)
-            except RuntimeError as exc:
-                # Fresh databases already have these columns from CREATE TABLE
-                message = str(exc).lower()
-                if "already has property" in message or "already exists" in message:
-                    continue
-                raise
+        migrations = [(2, self._migrate_to_v2), (3, self._migrate_to_v3)]
+        for target, run in migrations:
+            if target > stored:
+                run()
+                self.set_config_value("schema_version", target)
+                logger.info("Schema migrated to version %d", target)
+
+    def _migrate_to_v2(self) -> None:
+        feed_cols = self._column_names("Feed")
+        item_cols = self._column_names("Item")
+        additions = [
+            ("Feed", "id", "STRING", feed_cols),
+            ("Feed", "display_name", "STRING", feed_cols),
+            ("Feed", "subscribed_at", "TIMESTAMP", feed_cols),
+            ("Feed", "is_active", "BOOLEAN DEFAULT true", feed_cols),
+            ("Feed", "reader_mode_enabled", "BOOLEAN", feed_cols),
+            ("Feed", "consecutive_errors", "INT64 DEFAULT 0", feed_cols),
+            ("Feed", "last_error", "STRING", feed_cols),
+            ("Item", "id", "STRING", item_cols),
+            ("Item", "author", "STRING", item_cols),
+            ("Item", "word_count", "INT64 DEFAULT 0", item_cols),
+            ("Item", "reader_content", "STRING", item_cols),
+            ("Item", "reader_fetched_at", "TIMESTAMP", item_cols),
+        ]
+        for table, column, decl, existing in additions:
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD {column} {decl}")
         self._backfill_v2()
-        self.set_config_value("schema_version", _SCHEMA_VERSION)
-        logger.info("Schema migrated to version %d", _SCHEMA_VERSION)
 
     def _backfill_v2(self) -> None:
         for table, key in (("Feed", "url"), ("Item", "guid")):
@@ -180,6 +200,50 @@ class GraphService:
             "MATCH (f:Feed) WHERE f.subscribed_at IS NULL SET f.subscribed_at = $now",
             {"now": datetime.now(UTC)},
         )
+
+    def _migrate_to_v3(self) -> None:
+        """Copy legacy Note rows (item_id FK) onto HAS_NOTE edges, then drop the legacy table."""
+        if "_NoteLegacy" not in self._table_names():
+            return
+        legacy = _rows(
+            self._conn.execute(
+                "MATCH (o:_NoteLegacy) RETURN o.item_id AS item_id, o.body AS body, "
+                "o.created_at AS created_at, o.updated_at AS updated_at"
+            )
+        )
+        migrated = 0
+        for row in legacy:
+            item_rows = _rows(
+                self._conn.execute(
+                    "MATCH (i:Item) WHERE i.id = $item_id RETURN count(i) AS c",
+                    {"item_id": row["item_id"]},
+                )
+            )
+            if item_rows and item_rows[0].get("c", 0) > 0:
+                self._conn.execute(
+                    """
+                    MATCH (i:Item) WHERE i.id = $item_id
+                    CREATE (i)-[:HAS_NOTE]->(:Note {
+                        id: $id, body: $body,
+                        created_at: $created_at, updated_at: $updated_at
+                    })
+                    """,
+                    {
+                        "id": str(uuid.uuid4()),
+                        "item_id": row["item_id"],
+                        "body": row["body"],
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                    },
+                )
+                migrated += 1
+        discarded = len(legacy) - migrated
+        if discarded > 0:
+            logger.warning(
+                "Dropped %d orphaned legacy note(s) with no matching item during v3 migration",
+                discarded,
+            )
+        self._conn.execute("DROP TABLE _NoteLegacy")
 
     def _exists(self, query: str, params: dict[str, Any]) -> bool:
         rows = _rows(self._conn.execute(query, params))
@@ -687,7 +751,7 @@ class GraphService:
         rows = _rows(
             self._conn.execute(
                 """
-                MATCH (n:Note {item_id: $item_id})
+                MATCH (i:Item)-[:HAS_NOTE]->(n:Note) WHERE i.id = $item_id
                 RETURN n.body AS body, n.created_at AS created_at, n.updated_at AS updated_at
                 """,
                 {"item_id": item_id},
@@ -699,23 +763,33 @@ class GraphService:
         if self._item_guid(item_id) is None:
             return None
         now = datetime.now(UTC)
-        rows = _rows(
+        if self.get_note(item_id) is not None:
             self._conn.execute(
                 """
-                MERGE (n:Note {item_id: $item_id})
-                ON CREATE SET n.body = $body, n.created_at = $now, n.updated_at = $now
-                ON MATCH SET n.body = $body, n.updated_at = $now
-                RETURN n.body AS body, n.created_at AS created_at, n.updated_at AS updated_at
+                MATCH (i:Item)-[:HAS_NOTE]->(n:Note) WHERE i.id = $item_id
+                SET n.body = $body, n.updated_at = $now
                 """,
                 {"item_id": item_id, "body": body, "now": now},
             )
-        )
-        return rows[0]
+        else:
+            self._conn.execute(
+                """
+                MATCH (i:Item) WHERE i.id = $item_id
+                CREATE (i)-[:HAS_NOTE]->(:Note {
+                    id: $id, body: $body, created_at: $now, updated_at: $now
+                })
+                """,
+                {"item_id": item_id, "id": str(uuid.uuid4()), "body": body, "now": now},
+            )
+        return self.get_note(item_id)
 
     def delete_note(self, item_id: str) -> bool:
         if self.get_note(item_id) is None:
             return False
-        self._conn.execute("MATCH (n:Note {item_id: $item_id}) DELETE n", {"item_id": item_id})
+        self._conn.execute(
+            "MATCH (i:Item)-[:HAS_NOTE]->(n:Note) WHERE i.id = $item_id DETACH DELETE n",
+            {"item_id": item_id},
+        )
         return True
 
     def close(self) -> None:

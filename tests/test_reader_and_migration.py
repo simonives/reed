@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
@@ -12,7 +13,7 @@ import httpx
 import kuzu
 import pytest
 
-from reed.graph import GraphService
+from reed.graph import _SCHEMA_VERSION, GraphService
 from reed.http import (
     UnsafeURLError,
     _PinnedResolverBackend,
@@ -335,5 +336,124 @@ class TestM1Migration:
             items, total = graph.list_items()
             assert total == 1
             assert items[0]["id"]  # backfilled
+            assert graph.get_config_values()["schema_version"] == _SCHEMA_VERSION
         finally:
             graph.close()
+
+
+class TestV2ToV3Migration:
+    """A v2 database (Note keyed by item_id) migrates to a HAS_NOTE edge."""
+
+    def _build_v2_db(self, db_path):
+        db = kuzu.Database(db_path)
+        conn = kuzu.Connection(db)
+        conn.execute(
+            "CREATE NODE TABLE Feed(url STRING, id STRING, title STRING, PRIMARY KEY(url))"
+        )
+        conn.execute(
+            "CREATE NODE TABLE Item(guid STRING, id STRING, title STRING, "
+            "read BOOLEAN, starred BOOLEAN, PRIMARY KEY(guid))"
+        )
+        conn.execute(
+            "CREATE NODE TABLE Note(item_id STRING, body STRING, "
+            "created_at TIMESTAMP, updated_at TIMESTAMP, PRIMARY KEY(item_id))"
+        )
+        conn.execute("CREATE NODE TABLE Config(key STRING, value STRING, PRIMARY KEY(key))")
+        conn.execute(
+            "CREATE (:Item {guid: 'g1', id: 'item-1', title: 'T', read: false, starred: false})"
+        )
+        conn.execute(
+            "CREATE (:Note {item_id: 'item-1', body: 'kept note', "
+            "created_at: timestamp('2026-02-01 00:00:00'), "
+            "updated_at: timestamp('2026-02-02 00:00:00')})"
+        )
+        conn.execute('MERGE (c:Config {key: "schema_version"}) ON CREATE SET c.value = "2"')
+        conn.close()
+        db.close()
+
+    def test_v2_note_becomes_edge(self, tmp_path):
+        db_path = str(tmp_path / "v2.kuzu")
+        self._build_v2_db(db_path)
+
+        graph = GraphService(db_path)
+        try:
+            assert graph.get_config_values()["schema_version"] == 3
+            # Note table restructured: no item_id column, legacy table gone
+            assert "item_id" not in graph._column_names("Note")
+            assert "_NoteLegacy" not in graph._table_names()
+            # The note survived, reachable through the edge by item id
+            note = graph.get_note("item-1")
+            assert note is not None
+            assert note["body"] == "kept note"
+        finally:
+            graph.close()
+
+    def test_orphaned_legacy_note_is_warned_and_discarded(self, tmp_path, caplog):
+        db_path = str(tmp_path / "v2_orphan.kuzu")
+        db = kuzu.Database(db_path)
+        conn = kuzu.Connection(db)
+        conn.execute(
+            "CREATE NODE TABLE Feed(url STRING, id STRING, title STRING, PRIMARY KEY(url))"
+        )
+        conn.execute(
+            "CREATE NODE TABLE Item(guid STRING, id STRING, title STRING, "
+            "read BOOLEAN, starred BOOLEAN, PRIMARY KEY(guid))"
+        )
+        conn.execute(
+            "CREATE NODE TABLE Note(item_id STRING, body STRING, "
+            "created_at TIMESTAMP, updated_at TIMESTAMP, PRIMARY KEY(item_id))"
+        )
+        conn.execute("CREATE NODE TABLE Config(key STRING, value STRING, PRIMARY KEY(key))")
+        # Item with id 'item-real'; orphan note references a non-existent 'item-gone'
+        conn.execute(
+            "CREATE (:Item {guid: 'g1', id: 'item-real', title: 'T', read: false, starred: false})"
+        )
+        conn.execute(
+            "CREATE (:Note {item_id: 'item-gone', body: 'orphan note', "
+            "created_at: timestamp('2026-02-01 00:00:00'), "
+            "updated_at: timestamp('2026-02-02 00:00:00')})"
+        )
+        conn.execute('MERGE (c:Config {key: "schema_version"}) ON CREATE SET c.value = "2"')
+        conn.close()
+        db.close()
+
+        with caplog.at_level(logging.WARNING):
+            graph = GraphService(db_path)
+        try:
+            assert graph.get_config_values()["schema_version"] == 3
+            assert "_NoteLegacy" not in graph._table_names()
+            # Orphan note was not attached to any item
+            assert graph.get_note("item-real") is None
+            assert graph.get_note("item-gone") is None
+        finally:
+            graph.close()
+
+        assert "orphaned legacy note" in caplog.text
+
+
+class TestFreshSchema:
+    """A brand-new database is stamped at the current version and runs no migration."""
+
+    def test_fresh_database_stamps_current_version(self, tmp_path):
+        graph = GraphService(str(tmp_path / "fresh.kuzu"))
+        try:
+            assert graph.get_config_values()["schema_version"] == _SCHEMA_VERSION
+        finally:
+            graph.close()
+
+    def test_fresh_database_runs_no_migration_step(self, tmp_path):
+        with patch.object(GraphService, "_migrate_to_v2") as spy:
+            graph = GraphService(str(tmp_path / "fresh2.kuzu"))
+            graph.close()
+        spy.assert_not_called()
+
+    def test_reopen_is_idempotent(self, tmp_path):
+        db_path = str(tmp_path / "reopen.kuzu")
+        GraphService(db_path).close()
+        with patch.object(GraphService, "_migrate_to_v2") as spy:
+            graph = GraphService(db_path)
+            try:
+                assert graph.get_config_values()["schema_version"] == _SCHEMA_VERSION
+            finally:
+                graph.close()
+        spy.assert_not_called()

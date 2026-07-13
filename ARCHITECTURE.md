@@ -36,24 +36,40 @@
 
 | Node | Properties |
 |---|---|
-| `Feed` | `url`, `title`, `description`, `site_url`, `poll_interval_minutes`, `last_fetched_at`, `error_state`, `etag`, `last_modified` |
-| `Item` | `guid`, `url`, `title`, `summary`, `content`, `published_at`, `fetched_at`, `read`, `starred` |
-| `Author` | `name`, `email`, `url` |
-| `Tag` | `name` (user-defined) |
-| `Topic` | `name`, `source` (extracted or inferred) |
+| `Feed` | `url` (PK), `id`, `title`, `display_name`, `description`, `site_url`, `poll_interval_minutes`, `reader_mode_enabled`, `is_active`, `subscribed_at`, `last_fetched_at`, `consecutive_errors`, `last_error`, `etag`, `last_modified` |
+| `Item` | `guid` (PK), `id`, `url`, `title`, `summary`, `content`, `author`, `word_count`, `published_at`, `fetched_at`, `read`, `starred`, `reader_content`, `reader_fetched_at` |
+| `Tag` | `name` (PK, user-defined), `id` (UUID) |
+| `Note` | `id` (PK), `body`, `created_at`, `updated_at` |
+| `Config` | `key` (PK), `value` |
+
+`author` is stored as a flat `Item.author` string; there is no `Author` node. `Topic` and its derived edges are future work (see below).
 
 ### Edges
 
 | Edge | Direction | Description |
 |---|---|---|
 | `HAS_ITEM` | Feed → Item | An item belongs to a feed |
-| `WRITTEN_BY` | Item → Author | An item has an author |
-| `TAGGED_WITH` | Item → Tag | User-applied tag |
+| `HAS_NOTE` | Item → Note | An item's user note (1:1) |
+| `TAGGED` | Item → Tag | User-applied tag on an item |
+| `FEED_TAGGED` | Feed → Tag | User-applied tag on a feed |
+
+#### Future (derived graph)
+
+The following edges are not yet implemented. They represent planned AI-assisted enrichment once the core graph is stable:
+
+| Edge | Direction | Description |
+|---|---|---|
 | `ABOUT` | Item → Topic | Topic extracted from item content |
 | `RELATED_TO` | Topic → Topic | Topics co-occurring across items (inferred) |
 | `SIMILAR_TO` | Item → Item | Items sharing topic nodes (inferred) |
 
-`RELATED_TO` and `SIMILAR_TO` are derived edges — computed from the graph and written back in. They make traversal from an MCP client genuinely useful: hop from an item to its topics, to related topics, to related items across different feeds.
+When implemented, these derived edges will make traversal from an MCP client genuinely useful: hop from an item to its topics, to related topics, to related items across different feeds.
+
+### Schema conventions
+
+**Response envelope.** REST responses use a `{ "data": ..., "meta": ... }` envelope on success and `{ "error": { "code": ..., "message": ..., "detail": ... } }` on error. Established in M2.
+
+**Primary keys.** `Feed` is keyed by `url` and `Item` by `guid` (natural keys); each also carries a UUID `id` that is the public/API identifier. Kuzu builds a hash index only on the primary key, and the natural keys are the ingestion hot path (the poller matches feeds by `url` and items by `guid` on every poll) and the enforcement point for feed/item deduplication. UUID `id` lookups table-scan, which is negligible at single-user scale. Switching to UUID primary keys (issue #31) is a deliberate won't-fix, recorded here to close the question.
 
 ---
 

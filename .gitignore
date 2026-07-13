@@ -55,3 +55,6 @@ docker-compose.override.yml
 .vscode/
 *.swp
 *.swo
+
+# Superpowers workflow artefacts (specs, plans) — local only, not part of the repo
+docs/superpowers/

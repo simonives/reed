@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from reed.graph import GraphService, _rows
+
 
 def _first_item_id(authed):
     return authed.get("/api/v1/items").json()["data"][0]["id"]
@@ -137,3 +141,39 @@ class TestConfig:
     def test_empty_patch_returns_422(self, authed):
         r = authed.patch("/api/v1/config", json={})
         assert r.status_code == 422
+
+
+class TestNoteEdge:
+    def test_put_get_update_delete_note_via_edge(self, tmp_path):
+        graph = GraphService(str(tmp_path / "notes.kuzu"))
+        try:
+            graph.create_feed(url="https://f.example/rss", title="F", description="", site_url="")
+            item_id = graph.create_item(
+                feed_url="https://f.example/rss", guid="ng1",
+                url="https://f.example/a", title="A", summary="", content="",
+                author="", word_count=0, published_at=None, fetched_at=datetime.now(UTC),
+            )
+
+            created = graph.put_note(item_id, "first")
+            assert created["body"] == "first"
+
+            updated = graph.put_note(item_id, "second")
+            assert updated["body"] == "second"
+            assert updated["created_at"] == created["created_at"]  # preserved on update
+
+            # exactly one Note node exists (no duplicate on update)
+            count = _rows(graph._conn.execute("MATCH (n:Note) RETURN count(n) AS c"))[0]["c"]
+            assert count == 1
+
+            assert graph.get_item(item_id)["note"]["body"] == "second"
+            assert graph.delete_note(item_id) is True
+            assert graph.get_note(item_id) is None
+        finally:
+            graph.close()
+
+    def test_put_note_unknown_item_returns_none(self, tmp_path):
+        graph = GraphService(str(tmp_path / "notes2.kuzu"))
+        try:
+            assert graph.put_note("no-such-id", "x") is None
+        finally:
+            graph.close()
