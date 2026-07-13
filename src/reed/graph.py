@@ -192,18 +192,14 @@ class GraphService:
     def _backfill_v2(self) -> None:
         for table, key in (("Feed", "url"), ("Item", "guid")):
             rows = _rows(
-                self._conn.execute(
-                    f"MATCH (n:{table}) WHERE n.id IS NULL RETURN n.{key} AS key"
-                )
+                self._conn.execute(f"MATCH (n:{table}) WHERE n.id IS NULL RETURN n.{key} AS key")
             )
             for row in rows:
                 self._conn.execute(
                     f"MATCH (n:{table}) WHERE n.{key} = $key SET n.id = $id",
                     {"key": row["key"], "id": str(uuid.uuid4())},
                 )
-        self._conn.execute(
-            "MATCH (f:Feed) WHERE f.is_active IS NULL SET f.is_active = true"
-        )
+        self._conn.execute("MATCH (f:Feed) WHERE f.is_active IS NULL SET f.is_active = true")
         self._conn.execute(
             "MATCH (f:Feed) WHERE f.consecutive_errors IS NULL SET f.consecutive_errors = 0"
         )
@@ -276,9 +272,7 @@ class GraphService:
     # --- Feeds ---
 
     def feed_exists(self, url: str) -> bool:
-        return self._exists(
-            "MATCH (f:Feed {url: $url}) RETURN count(f) AS cnt", {"url": url}
-        )
+        return self._exists("MATCH (f:Feed {url: $url}) RETURN count(f) AS cnt", {"url": url})
 
     def feed_exists_by_id(self, feed_id: str) -> bool:
         return self._exists(
@@ -445,17 +439,13 @@ class GraphService:
         if not self.feed_exists_by_id(feed_id):
             return False
         # Items are kept (read/starred state preserved); only the feed and its edges go
-        self._conn.execute(
-            "MATCH (f:Feed) WHERE f.id = $id DETACH DELETE f", {"id": feed_id}
-        )
+        self._conn.execute("MATCH (f:Feed) WHERE f.id = $id DETACH DELETE f", {"id": feed_id})
         return True
 
     # --- Items ---
 
     def item_exists(self, guid: str) -> bool:
-        return self._exists(
-            "MATCH (i:Item {guid: $guid}) RETURN count(i) AS cnt", {"guid": guid}
-        )
+        return self._exists("MATCH (i:Item {guid: $guid}) RETURN count(i) AS cnt", {"guid": guid})
 
     def create_item(
         self,
@@ -579,12 +569,8 @@ class GraphService:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
-        prefix, params = self._item_filters(
-            feed_id, tag, unread_only, starred_only, since, until
-        )
-        count_rows = _rows(
-            self._conn.execute(f"{prefix} RETURN count(i) AS total", params)
-        )
+        prefix, params = self._item_filters(feed_id, tag, unread_only, starred_only, since, until)
+        count_rows = _rows(self._conn.execute(f"{prefix} RETURN count(i) AS total", params))
         total = int(count_rows[0]["total"]) if count_rows else 0
         result = self._conn.execute(
             f"""
@@ -669,9 +655,7 @@ class GraphService:
             clauses.append("coalesce(i.published_at, i.fetched_at) < $before")
             params["before"] = before
         where = "WHERE " + " AND ".join(clauses)
-        count_rows = _rows(
-            self._conn.execute(f"{match} {where} RETURN count(i) AS total", params)
-        )
+        count_rows = _rows(self._conn.execute(f"{match} {where} RETURN count(i) AS total", params))
         total = int(count_rows[0]["total"]) if count_rows else 0
         self._conn.execute(f"{match} {where} SET i.read = true", params)
         return total

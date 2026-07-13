@@ -65,9 +65,7 @@ def item_list_response(item: dict[str, Any]) -> dict[str, Any]:
         "starred": bool(item["starred"]),
         "word_count": int(item.get("word_count") or 0),
         "feed": (
-            {"id": item["feed_id"], "title": item["feed_title"]}
-            if item.get("feed_id")
-            else None
+            {"id": item["feed_id"], "title": item["feed_title"]} if item.get("feed_id") else None
         ),
         "author": {"name": item["author"]} if item.get("author") else None,
         "tags": item.get("tags", []),

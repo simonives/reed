@@ -135,13 +135,9 @@ async def tag_item(
 
 
 @router.delete("/{item_id}/tags/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def untag_item(
-    item_id: str, tag_id: str, graph: GraphService = Depends(get_graph)
-) -> None:
+async def untag_item(item_id: str, tag_id: str, graph: GraphService = Depends(get_graph)) -> None:
     if not graph.untag_item(item_id, tag_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Item or tag not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item or tag not found")
 
 
 # --- Item note ---

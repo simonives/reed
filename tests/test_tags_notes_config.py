@@ -149,9 +149,16 @@ class TestNoteEdge:
         try:
             graph.create_feed(url="https://f.example/rss", title="F", description="", site_url="")
             item_id = graph.create_item(
-                feed_url="https://f.example/rss", guid="ng1",
-                url="https://f.example/a", title="A", summary="", content="",
-                author="", word_count=0, published_at=None, fetched_at=datetime.now(UTC),
+                feed_url="https://f.example/rss",
+                guid="ng1",
+                url="https://f.example/a",
+                title="A",
+                summary="",
+                content="",
+                author="",
+                word_count=0,
+                published_at=None,
+                fetched_at=datetime.now(UTC),
             )
 
             created = graph.put_note(item_id, "first")

@@ -160,9 +160,7 @@ class TestUpdateFeed:
         assert r.status_code == 404
 
     def test_patch_whitespace_tag_returns_400(self, authed, subscribed_feed):
-        r = authed.patch(
-            f"/api/v1/feeds/{subscribed_feed['id']}", json={"tags": ["  "]}
-        )
+        r = authed.patch(f"/api/v1/feeds/{subscribed_feed['id']}", json={"tags": ["  "]})
         assert r.status_code == 400
         assert r.json()["error"]["code"] == "VALIDATION_ERROR"
 
@@ -237,9 +235,7 @@ class TestDiscover:
         resp.raise_for_status = MagicMock()
 
         with patched_feed_fetch(response=resp):
-            r = authed.post(
-                "/api/v1/feeds/discover", json={"url": "https://example.com/feed.xml"}
-            )
+            r = authed.post("/api/v1/feeds/discover", json={"url": "https://example.com/feed.xml"})
 
         assert r.status_code == 200
         assert r.json()["data"][0]["url"] == "https://example.com/feed.xml"
@@ -253,7 +249,9 @@ class TestFetchErrorHandling:
         assert r.json()["error"]["message"].startswith("Could not fetch:")
 
     def test_subscribe_ssrf_message(self, authed):
-        with patched_feed_fetch(side_effect=UnsafeURLError("Host resolves to a private or reserved address: x")):
+        with patched_feed_fetch(
+            side_effect=UnsafeURLError("Host resolves to a private or reserved address: x")
+        ):
             r = authed.post("/api/v1/feeds", json={"url": "https://x.example/feed"})
         assert r.status_code == 422
         assert r.json()["error"]["message"].startswith("Refusing to fetch:")

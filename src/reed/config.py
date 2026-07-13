@@ -64,8 +64,6 @@ def effective_feed_settings(feed: dict[str, Any], config: dict[str, Any]) -> dic
             else int(config["default_poll_interval_minutes"])
         ),
         "reader_mode_enabled": (
-            bool(reader_mode)
-            if reader_mode is not None
-            else bool(config["reader_mode_enabled"])
+            bool(reader_mode) if reader_mode is not None else bool(config["reader_mode_enabled"])
         ),
     }

@@ -99,6 +99,7 @@ class TestSSRFGuard:
         )
         client = AsyncMock()
         client.get = AsyncMock(return_value=redirect)
+
         async def resolve(host):
             if host == "example.com":
                 return ["93.184.216.34"]
@@ -121,12 +122,14 @@ class TestSSRFGuard:
         assert response.status_code == 200
 
     async def test_require_safe_url_propagates_specific_message(self):
-        with patch(
-            "reed.http._resolve_safe_ips",
-            AsyncMock(side_effect=UnsafeURLError("Host did not resolve: x.example")),
+        with (
+            patch(
+                "reed.http._resolve_safe_ips",
+                AsyncMock(side_effect=UnsafeURLError("Host did not resolve: x.example")),
+            ),
+            pytest.raises(UnsafeURLError, match="Host did not resolve"),
         ):
-            with pytest.raises(UnsafeURLError, match="Host did not resolve"):
-                await _require_safe_url(httpx.URL("https://x.example/"))
+            await _require_safe_url(httpx.URL("https://x.example/"))
 
     async def test_extract_article_blocks_ssrf(self):
         """extract_article returns None (not an error) for a blocked URL."""
