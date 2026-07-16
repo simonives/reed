@@ -121,6 +121,11 @@ class TestConfig:
             "default_theme": "system",
             "items_per_page": 50,
             "mark_read_on_open": True,
+            "accent_color": "#3b82f6",
+            "font_size_base": 16,
+            "reading_width": 760,
+            "line_height": 1.65,
+            "font_family_reading": "system-ui, sans-serif",
         }
 
     def test_patch_persists(self, authed):
@@ -141,6 +146,34 @@ class TestConfig:
     def test_empty_patch_returns_422(self, authed):
         r = authed.patch("/api/v1/config", json={})
         assert r.status_code == 422
+
+    def test_appearance_patch_persists(self, authed):
+        r = authed.patch(
+            "/api/v1/config",
+            json={"accent_color": "#ff0000", "font_size_base": 18, "line_height": 1.8},
+        )
+        assert r.status_code == 200
+        config = authed.get("/api/v1/config").json()["data"]
+        assert config["accent_color"] == "#ff0000"
+        assert config["font_size_base"] == 18
+        assert config["line_height"] == 1.8
+        assert config["reading_width"] == 760  # untouched
+
+    def test_invalid_accent_colour_returns_400(self, authed):
+        r = authed.patch("/api/v1/config", json={"accent_color": "red"})
+        assert r.status_code == 400
+
+    def test_font_size_out_of_bounds_returns_400(self, authed):
+        r = authed.patch("/api/v1/config", json={"font_size_base": 99})
+        assert r.status_code == 400
+
+    def test_line_height_out_of_bounds_returns_400(self, authed):
+        r = authed.patch("/api/v1/config", json={"line_height": 5.0})
+        assert r.status_code == 400
+
+    def test_unsupported_font_family_returns_400(self, authed):
+        r = authed.patch("/api/v1/config", json={"font_family_reading": "Comic Sans"})
+        assert r.status_code == 400
 
 
 class TestNoteEdge:

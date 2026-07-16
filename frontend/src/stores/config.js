@@ -10,6 +10,11 @@ const DEFAULTS = {
   mark_read_on_open: true,
   reader_mode_enabled: true,
   default_poll_interval_minutes: 60,
+  accent_color: '#3b82f6',
+  font_size_base: 16,
+  reading_width: 760,
+  line_height: 1.65,
+  font_family_reading: 'system-ui, sans-serif',
 }
 
 export const useConfigStore = defineStore('config', () => {
@@ -22,5 +27,11 @@ export const useConfigStore = defineStore('config', () => {
     loaded.value = true
   }
 
-  return { values, loaded, load }
+  // PATCH only the changed keys; the response echoes the full effective config.
+  async function save(patch) {
+    const { data } = await api.patch('/config', patch)
+    values.value = { ...DEFAULTS, ...data }
+  }
+
+  return { values, loaded, load, save }
 })

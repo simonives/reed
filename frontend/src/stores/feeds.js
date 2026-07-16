@@ -27,5 +27,39 @@ export const useFeedsStore = defineStore('feeds', () => {
     if (feed) feed.unread_count = Math.max(0, (feed.unread_count || 0) + delta)
   }
 
-  return { feeds, loading, totalUnread, load, adjustUnread }
+  async function discover(url) {
+    const { data } = await api.post('/feeds/discover', { url })
+    return data
+  }
+
+  async function subscribe(url) {
+    const { data } = await api.post('/feeds', { url })
+    await load()
+    return data
+  }
+
+  function replaceRow(feed) {
+    const i = feeds.value.findIndex((f) => f.id === feed.id)
+    if (i !== -1) feeds.value[i] = feed
+  }
+
+  async function update(id, patch) {
+    const { data } = await api.patch(`/feeds/${id}`, patch)
+    replaceRow(data)
+    return data
+  }
+
+  async function refresh(id) {
+    const { data } = await api.post(`/feeds/${id}/refresh`)
+    replaceRow(data)
+    return data
+  }
+
+  async function remove(id) {
+    await api.delete(`/feeds/${id}`)
+    feeds.value = feeds.value.filter((f) => f.id !== id)
+    return true
+  }
+
+  return { feeds, loading, totalUnread, load, adjustUnread, discover, subscribe, update, refresh, remove }
 })

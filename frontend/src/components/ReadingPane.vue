@@ -17,8 +17,19 @@
           <time v-if="published" :datetime="published">{{ formatDateTime(published) }}</time>
           <span v-if="readingTime"> · {{ readingTime }}</span>
         </p>
-        <ul v-if="detail.tags.length" class="article__tags">
-          <li v-for="tag in detail.tags" :key="tag" class="article__tag">{{ tag }}</li>
+        <ul class="article__tags">
+          <li v-for="tag in detail.tags" :key="tag" class="article__tag">
+            {{ tag }}
+            <button type="button" data-test="remove-tag" aria-label="Remove tag" @click="items.removeTag(detail.id, tag)">×</button>
+          </li>
+          <li class="article__tag-add">
+            <input
+              v-model.trim="tagInput"
+              aria-label="Add tag"
+              placeholder="Add tag"
+              @keydown.enter.prevent="onAddTag"
+            />
+          </li>
         </ul>
       </header>
 
@@ -47,9 +58,16 @@
 
       <p v-if="extractError" class="article__error" role="alert">{{ extractError }}</p>
 
-      <div v-if="detail.note" class="article__note">
-        <strong>Note</strong>
-        <p>{{ detail.note.body }}</p>
+      <div class="article__note">
+        <div class="article__note-head">
+          <strong>Note</strong>
+          <button v-if="detail.note" type="button" data-test="delete-note" @click="items.deleteNote(detail.id)">Remove</button>
+        </div>
+        <textarea v-model="noteDraft" aria-label="Note" rows="3" placeholder="Add a note…"></textarea>
+        <button type="button" class="btn" data-test="save-note" :disabled="noteSaving" @click="onSaveNote">
+          {{ noteSaving ? 'Saving…' : 'Save note' }}
+        </button>
+        <p v-if="noteError" class="article__error" role="alert">{{ noteError }}</p>
       </div>
 
       <ArticleBody :html="rawBody" />
@@ -72,6 +90,11 @@ const scrollEl = ref(null)
 const showReader = ref(true)
 const extracting = ref(false)
 const extractError = ref('')
+
+const tagInput = ref('')
+const noteDraft = ref('')
+const noteSaving = ref(false)
+const noteError = ref('')
 
 const detail = computed(() => items.detail)
 const published = computed(() => detail.value?.published_at || detail.value?.fetched_at)
@@ -102,6 +125,44 @@ watch(
     if (scrollEl.value) scrollEl.value.scrollTop = 0
   },
 )
+
+// Seed the note draft whenever the open item changes.
+watch(
+  () => detail.value?.id,
+  () => {
+    noteDraft.value = detail.value?.note?.body || ''
+    tagInput.value = ''
+    noteError.value = ''
+  },
+  { immediate: true },
+)
+
+async function onAddTag() {
+  const name = tagInput.value.trim()
+  if (!name) return
+  tagInput.value = ''
+  try {
+    await items.addTag(detail.value.id, name)
+  } catch {
+    tagInput.value = name
+  }
+}
+
+async function onSaveNote() {
+  noteSaving.value = true
+  noteError.value = ''
+  try {
+    if (noteDraft.value.trim()) {
+      await items.saveNote(detail.value.id, noteDraft.value)
+    } else if (detail.value?.note) {
+      await items.deleteNote(detail.value.id)
+    }
+  } catch (err) {
+    noteError.value = err.message || 'Could not save note.'
+  } finally {
+    noteSaving.value = false
+  }
+}
 
 async function extract() {
   if (!detail.value) return
@@ -142,6 +203,8 @@ defineExpose({ pageDown })
   max-width: var(--reading-width);
   margin: 0 auto;
   padding: var(--space-6) var(--space-5);
+  font-family: var(--font-family-reading);
+  line-height: var(--line-height);
 }
 
 .article__title {
@@ -204,4 +267,8 @@ defineExpose({ pageDown })
   color: var(--text-secondary);
   white-space: pre-wrap;
 }
+
+.article__tag-add input { border: none; background: transparent; font-size: var(--font-size-xs); width: 6rem; }
+.article__note-head { display: flex; justify-content: space-between; align-items: center; }
+.article__note textarea { width: 100%; margin: var(--space-2) 0; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); font: inherit; }
 </style>

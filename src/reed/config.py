@@ -32,11 +32,29 @@ def get_settings() -> Settings:
 
 # Runtime-editable config (PATCH /api/v1/config), stored in Kuzu. Environment
 # settings provide the defaults; stored values override them.
+
+# The reading font stacks the Appearance UI offers. The stored config value is
+# the raw CSS stack (consistent with the other appearance vars), validated
+# against this allowlist so only known-safe stacks reach :root.
+FONT_FAMILY_STACKS = frozenset(
+    {
+        "system-ui, sans-serif",
+        "'Segoe UI', Roboto, system-ui, sans-serif",
+        "Georgia, 'Times New Roman', serif",
+        "ui-monospace, 'SF Mono', Menlo, monospace",
+    }
+)
+
 CONFIG_DEFAULTS = {
     "reader_mode_enabled": True,
     "default_theme": "system",
     "items_per_page": 50,
     "mark_read_on_open": True,
+    "accent_color": "#3b82f6",
+    "font_size_base": 16,
+    "reading_width": 760,
+    "line_height": 1.65,
+    "font_family_reading": "system-ui, sans-serif",
 }
 
 

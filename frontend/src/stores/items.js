@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { api } from '../api/client'
 import { useConfigStore } from './config'
 import { useFeedsStore } from './feeds'
+import { useTagsStore } from './tags'
 import { useUiStore } from './ui'
 
 // Bulk mark-read is only supported server-side for these views.
@@ -12,6 +13,7 @@ export const useItemsStore = defineStore('items', () => {
   const ui = useUiStore()
   const config = useConfigStore()
   const feeds = useFeedsStore()
+  const tags = useTagsStore()
 
   const items = ref([])
   const total = ref(0)
@@ -181,6 +183,35 @@ export const useItemsStore = defineStore('items', () => {
     return data
   }
 
+  async function saveNote(id, body) {
+    const { data } = await api.put(`/items/${id}/note`, { body })
+    if (detail.value?.id === id) detail.value.note = data
+    return data
+  }
+
+  async function deleteNote(id) {
+    await api.delete(`/items/${id}/note`)
+    if (detail.value?.id === id) detail.value.note = null
+  }
+
+  async function addTag(id, name) {
+    const { data } = await api.post(`/items/${id}/tags`, { name })
+    tags.upsert(data) // keep the id map current so the tag is resolvable to untag
+    if (detail.value?.id === id && !detail.value.tags.includes(name)) {
+      detail.value.tags.push(name)
+    }
+  }
+
+  async function removeTag(id, name) {
+    await tags.ensureLoaded()
+    const tag = tags.byName(name)
+    if (!tag) return
+    await api.delete(`/items/${id}/tags/${tag.id}`)
+    if (detail.value?.id === id) {
+      detail.value.tags = detail.value.tags.filter((t) => t !== name)
+    }
+  }
+
   return {
     items,
     total,
@@ -201,5 +232,9 @@ export const useItemsStore = defineStore('items', () => {
     toggleStar,
     markViewRead,
     extractReader,
+    saveNote,
+    deleteNote,
+    addTag,
+    removeTag,
   }
 })

@@ -10,6 +10,9 @@
     <RiverView v-else ref="riverView" />
 
     <KeyboardHelp v-if="ui.showHelp" />
+    <SettingsPanel v-if="ui.showSettings" />
+    <AddFeedModal v-if="ui.showAddFeed" />
+    <FeedSettingsDrawer v-if="ui.editingFeedId" />
   </div>
 </template>
 
@@ -20,13 +23,18 @@ import ItemList from './components/ItemList.vue'
 import ReadingPane from './components/ReadingPane.vue'
 import RiverView from './components/RiverView.vue'
 import KeyboardHelp from './components/KeyboardHelp.vue'
+import SettingsPanel from './components/SettingsPanel.vue'
+import AddFeedModal from './components/AddFeedModal.vue'
+import FeedSettingsDrawer from './components/FeedSettingsDrawer.vue'
 import ApiKeyGate from './components/ApiKeyGate.vue'
 import { useAuthStore } from './stores/auth'
 import { useConfigStore } from './stores/config'
 import { useFeedsStore } from './stores/feeds'
 import { useItemsStore } from './stores/items'
+import { useTagsStore } from './stores/tags'
 import { useUiStore } from './stores/ui'
 import { useTheme } from './composables/useTheme'
+import { useAppearance } from './composables/useAppearance'
 import { useKeyboard } from './composables/useKeyboard'
 import { pageDownScroll } from './lib/scroll'
 
@@ -34,6 +42,7 @@ const auth = useAuthStore()
 const config = useConfigStore()
 const feeds = useFeedsStore()
 const items = useItemsStore()
+const tags = useTagsStore()
 const ui = useUiStore()
 
 const gateMessage = ref('')
@@ -41,6 +50,7 @@ const readingPane = ref(null)
 const riverView = ref(null)
 
 useTheme()
+useAppearance()
 
 function onSpace(event) {
   event.preventDefault()
@@ -57,7 +67,7 @@ async function bootstrap() {
   gateMessage.value = ''
   try {
     await config.load()
-    await Promise.all([feeds.load(), items.load()])
+    await Promise.all([feeds.load(), items.load(), tags.load()])
   } catch (err) {
     if (err.status === 401) {
       auth.clear()

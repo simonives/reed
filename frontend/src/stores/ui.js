@@ -11,6 +11,9 @@ export const useUiStore = defineStore('ui', () => {
   const view = ref({ ...DEFAULT_VIEW })
   const layout = ref(localStorage.getItem(LAYOUT_STORAGE) || 'three-pane')
   const showHelp = ref(false)
+  const showSettings = ref(false)
+  const showAddFeed = ref(false)
+  const editingFeedId = ref(null)
 
   function setView(next) {
     view.value = next
@@ -29,6 +32,22 @@ export const useUiStore = defineStore('ui', () => {
     showHelp.value = !showHelp.value
   }
 
+  function toggleSettings() {
+    showSettings.value = !showSettings.value
+  }
+
+  function toggleAddFeed() {
+    showAddFeed.value = !showAddFeed.value
+  }
+
+  function editFeed(id) {
+    editingFeedId.value = id
+  }
+
+  function closeFeedEditor() {
+    editingFeedId.value = null
+  }
+
   // Query params for GET /items, derived from the active view.
   const queryParams = computed(() => {
     const current = view.value
@@ -45,11 +64,18 @@ export const useUiStore = defineStore('ui', () => {
     view,
     layout,
     showHelp,
+    showSettings,
+    showAddFeed,
+    editingFeedId,
     queryParams,
     title,
     setView,
     setLayout,
     toggleLayout,
     toggleHelp,
+    toggleSettings,
+    toggleAddFeed,
+    editFeed,
+    closeFeedEditor,
   }
 })

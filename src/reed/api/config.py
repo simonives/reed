@@ -6,9 +6,9 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from ..config import effective_config
+from ..config import FONT_FAMILY_STACKS, effective_config
 from ..graph import GraphService
 from .deps import get_graph, require_api_key
 from .schemas import envelope
@@ -26,6 +26,18 @@ class ConfigUpdate(BaseModel):
     default_theme: str | None = Field(default=None, pattern="^(system|light|dark)$")
     items_per_page: int | None = Field(default=None, ge=1, le=200)
     mark_read_on_open: bool | None = None
+    accent_color: str | None = Field(default=None, pattern="^#[0-9a-fA-F]{6}$")
+    font_size_base: int | None = Field(default=None, ge=12, le=24)
+    reading_width: int | None = Field(default=None, ge=480, le=1200)
+    line_height: float | None = Field(default=None, ge=1.2, le=2.2)
+    font_family_reading: str | None = None
+
+    @field_validator("font_family_reading")
+    @classmethod
+    def _valid_font_family(cls, v: str | None) -> str | None:
+        if v is not None and v not in FONT_FAMILY_STACKS:
+            raise ValueError("unsupported font family")
+        return v
 
 
 @router.get("")

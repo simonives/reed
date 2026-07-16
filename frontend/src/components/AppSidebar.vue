@@ -2,6 +2,7 @@
   <nav class="sidebar" aria-label="Feeds and views">
     <header class="sidebar__brand">
       <span class="sidebar__wordmark">Reed</span>
+      <button class="icon-btn" title="Settings" aria-label="Settings" @click="ui.toggleSettings()">⚙</button>
       <ViewChrome />
     </header>
 
@@ -24,7 +25,10 @@
       </li>
     </ul>
 
-    <h2 class="sidebar__heading">Feeds</h2>
+    <div class="sidebar__feeds-head">
+      <h2 class="sidebar__heading">Feeds</h2>
+      <button class="icon-btn" title="Add feed" aria-label="Add feed" @click="ui.toggleAddFeed()">+</button>
+    </div>
     <p v-if="feeds.loading && !feeds.feeds.length" class="sidebar__hint">Loading…</p>
     <p v-else-if="!feeds.feeds.length" class="sidebar__hint">No feeds yet.</p>
     <ul v-else class="sidebar__feeds">
@@ -44,6 +48,7 @@
           </span>
           <span v-if="feed.unread_count" class="badge">{{ feed.unread_count }}</span>
         </button>
+        <button class="feed-gear icon-btn" title="Feed settings" aria-label="Feed settings" @click.stop="ui.editFeed(feed.id)">⚙</button>
       </li>
     </ul>
   </nav>
@@ -162,4 +167,12 @@ function setView(type, label, id) {
 .dot--error {
   background: var(--color-danger);
 }
+
+.sidebar__feeds-head { display: flex; align-items: center; justify-content: space-between; }
+
+.sidebar__feeds li { position: relative; }
+.feed-gear { position: absolute; right: var(--space-1); top: 50%; transform: translateY(-50%); opacity: 0; }
+.sidebar__feeds li:hover .feed-gear,
+.sidebar__feeds li:focus-within .feed-gear { opacity: 1; }
+@media (max-width: 900px) { .feed-gear { opacity: 1; } }
 </style>
