@@ -9,6 +9,7 @@
       <nav class="tabs">
         <button :class="{ 'tab--active': tab === 'reading' }" @click="tab = 'reading'">Reading</button>
         <button :class="{ 'tab--active': tab === 'appearance' }" @click="tab = 'appearance'">Appearance</button>
+        <button :class="{ 'tab--active': tab === 'import-export' }" @click="tab = 'import-export'">Import / Export</button>
       </nav>
 
       <form @submit.prevent="onSave">
@@ -54,6 +55,88 @@
           </label>
         </div>
 
+        <div v-show="tab === 'import-export'" class="fields import-export">
+          <div class="ie-section">
+            <h3>Import subscriptions</h3>
+            <p class="ie-hint">Select an OPML file from Feedly, Inoreader, or another RSS reader.</p>
+
+            <div v-if="!opml.previewData && !opml.importResult">
+              <label class="file-label">
+                Choose OPML file
+                <input
+                  type="file"
+                  accept=".opml,application/xml,text/xml"
+                  @change="onFileSelect"
+                  :disabled="opml.loading"
+                />
+              </label>
+            </div>
+
+            <div v-if="opml.previewData && !opml.importResult" class="preview-wrap">
+              <p class="ie-count">
+                {{ opml.previewData.candidates.length }} feed(s) found
+                <span v-if="opml.previewData.unparseable > 0">
+                  ({{ opml.previewData.unparseable }} skipped — no feed URL)
+                </span>
+              </p>
+              <table class="preview-table">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th>
+                    <th>Title</th>
+                    <th>Tags</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in draftCandidates" :key="row.url">
+                    <td><input type="checkbox" v-model="row.selected" /></td>
+                    <td class="preview-title">{{ row.title }}</td>
+                    <td><input v-model="row.tagInput" class="tag-input" /></td>
+                    <td>
+                      <span v-if="row.already_subscribed" class="badge badge--exists">Subscribed</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="ie-actions">
+                <button type="button" class="btn" @click="resetImport">Cancel</button>
+                <button
+                  type="button"
+                  class="btn btn--primary"
+                  @click="onImport"
+                  :disabled="opml.loading"
+                >{{ opml.loading ? 'Importing…' : 'Import selected' }}</button>
+              </div>
+            </div>
+
+            <div v-if="opml.importResult" class="import-result">
+              <p>
+                Import complete: {{ opml.importResult.added }} added,
+                {{ opml.importResult.skipped }} skipped.
+              </p>
+              <ul v-if="opml.importResult.failed.length > 0" class="failed-list">
+                <li v-for="f in opml.importResult.failed" :key="f.url">{{ f.url }}: {{ f.reason }}</li>
+              </ul>
+              <button type="button" class="btn" @click="resetImport">Import another file</button>
+            </div>
+
+            <p v-if="opml.error" class="error" role="alert">{{ opml.error }}</p>
+          </div>
+
+          <div class="ie-section">
+            <h3>Export subscriptions</h3>
+            <p class="ie-hint">Download all your Reed subscriptions as an OPML file.</p>
+            <button
+              type="button"
+              class="btn btn--primary"
+              data-testid="export-btn"
+              @click="onExport"
+              :disabled="opml.loading"
+            >{{ opml.loading ? 'Exporting…' : 'Export subscriptions' }}</button>
+          </div>
+        </div>
+
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <footer class="panel__foot">
           <button type="button" class="btn" @click="close">Cancel</button>
@@ -67,8 +150,10 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useConfigStore } from '../stores/config'
+import { useFeedsStore } from '../stores/feeds'
+import { useOpmlStore } from '../stores/opml'
 import { useUiStore } from '../stores/ui'
 
 // The `value` stacks must match the backend allowlist exactly — the canonical
@@ -87,12 +172,73 @@ const EDITABLE = [
 
 const config = useConfigStore()
 const ui = useUiStore()
+const opml = useOpmlStore()
+const feeds = useFeedsStore()
 
 const tab = ref('reading')
 const saving = ref(false)
 const error = ref('')
 // Draft seeded from current config; only the diff is saved.
 const draft = reactive(Object.fromEntries(EDITABLE.map((k) => [k, config.values[k]])))
+
+const draftCandidates = ref([])
+const allSelected = computed(
+  () => draftCandidates.value.length > 0 && draftCandidates.value.every((r) => r.selected),
+)
+
+// Keep draftCandidates in sync with opml.previewData so that setting
+// previewData directly (e.g. in tests) also populates the table.
+watch(
+  () => opml.previewData,
+  (data) => {
+    if (data) {
+      draftCandidates.value = data.candidates.map((c) => ({
+        ...c,
+        selected: !c.already_subscribed,
+        tagInput: c.tags.join(', '),
+      }))
+    } else {
+      draftCandidates.value = []
+    }
+  },
+  { immediate: true },
+)
+
+function onFileSelect(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  opml.preview(file)
+}
+
+function toggleAll(e) {
+  draftCandidates.value.forEach((r) => {
+    r.selected = e.target.checked
+  })
+}
+
+function resetImport() {
+  opml.reset()
+  draftCandidates.value = []
+}
+
+async function onImport() {
+  const selection = draftCandidates.value
+    .filter((r) => r.selected)
+    .map((r) => ({
+      url: r.url,
+      title: r.title,
+      tags: r.tagInput
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean),
+    }))
+  await opml.importFeeds(selection)
+  await feeds.load()
+}
+
+async function onExport() {
+  await opml.exportFeeds()
+}
 
 function diff() {
   const changed = {}
@@ -151,4 +297,21 @@ async function onSave() {
 .fields label.check { flex-direction: row; align-items: center; gap: var(--space-2); }
 .panel__foot { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-5); }
 .error { color: var(--color-danger); font-size: var(--font-size-sm); margin-top: var(--space-3); }
+.import-export { gap: var(--space-6); }
+.ie-section { display: flex; flex-direction: column; gap: var(--space-3); }
+.ie-section h3 { font-size: var(--font-size-sm); font-weight: 600; }
+.ie-hint { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.file-label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--font-size-sm); }
+.preview-wrap { display: flex; flex-direction: column; gap: var(--space-3); }
+.ie-count { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.preview-table { width: 100%; font-size: var(--font-size-sm); border-collapse: collapse; }
+.preview-table th,
+.preview-table td { padding: var(--space-1) var(--space-2); text-align: left; border-bottom: 1px solid var(--border); }
+.preview-title { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-input { width: 100%; font: inherit; color: inherit; background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--radius); padding: 2px var(--space-1); }
+.badge { font-size: var(--font-size-xs); padding: 1px var(--space-1); border-radius: var(--radius); }
+.badge--exists { background: var(--bg-hover); color: var(--text-muted); }
+.ie-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.import-result { font-size: var(--font-size-sm); display: flex; flex-direction: column; gap: var(--space-2); }
+.failed-list { padding-left: var(--space-4); color: var(--color-danger); }
 </style>

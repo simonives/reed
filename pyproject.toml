@@ -25,6 +25,7 @@ dependencies = [
     "trafilatura>=1.12",
     "yake>=0.4",
     "python-multipart>=0.0.12",
+    "defusedxml>=0.7",
     "pydantic-settings>=2.6",
 ]
 
