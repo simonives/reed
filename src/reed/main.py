@@ -18,6 +18,7 @@ from .api.errors import register_error_handlers
 from .api.feeds import router as feeds_router
 from .api.items import router as items_router
 from .api.opml import router as opml_router
+from .api.search import router as search_router
 from .api.tags import router as tags_router
 from .config import get_settings
 from .graph import GraphService
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(tags_router)
     app.include_router(config_router)
     app.include_router(opml_router)
+    app.include_router(search_router)
 
     frontend_dist = Path(get_settings().frontend_path)
     if frontend_dist.exists():

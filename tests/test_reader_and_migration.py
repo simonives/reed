@@ -408,7 +408,7 @@ class TestV2ToV3Migration:
 
         graph = GraphService(db_path)
         try:
-            assert graph.get_config_values()["schema_version"] == 3
+            assert graph.get_config_values()["schema_version"] == _SCHEMA_VERSION
             # Note table restructured: no item_id column, legacy table gone
             assert "item_id" not in graph._column_names("Note")
             assert "_NoteLegacy" not in graph._table_names()
@@ -451,7 +451,7 @@ class TestV2ToV3Migration:
         with caplog.at_level(logging.WARNING):
             graph = GraphService(db_path)
         try:
-            assert graph.get_config_values()["schema_version"] == 3
+            assert graph.get_config_values()["schema_version"] == _SCHEMA_VERSION
             assert "_NoteLegacy" not in graph._table_names()
             # Orphan note was not attached to any item
             assert graph.get_note("item-real") is None

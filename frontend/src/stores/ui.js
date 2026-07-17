@@ -3,8 +3,8 @@ import { defineStore } from 'pinia'
 
 const LAYOUT_STORAGE = 'reed.layout'
 
-// A view is {type, id?, label?}. type is one of:
-//   all | unread | starred | feed | tag
+// A view is {type, id?, q?, label?}. type is one of:
+//   all | unread | starred | feed | tag | search
 const DEFAULT_VIEW = { type: 'unread', label: 'All unread' }
 
 export const useUiStore = defineStore('ui', () => {
@@ -55,6 +55,7 @@ export const useUiStore = defineStore('ui', () => {
     if (current.type === 'starred') return { starred: true }
     if (current.type === 'feed') return { feed_id: current.id }
     if (current.type === 'tag') return { tag: current.id }
+    if (current.type === 'search') return { q: current.q }
     return {} // 'all'
   })
 

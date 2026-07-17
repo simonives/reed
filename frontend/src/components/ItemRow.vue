@@ -17,6 +17,13 @@
         <time :datetime="item.published_at || item.fetched_at">{{ time }}</time>
       </p>
       <p v-if="variant === 'river' && item.summary" class="row__summary">{{ item.summary }}</p>
+      <!-- Search result excerpt -->
+      <p v-if="item.excerpt" class="row__excerpt" v-html="item.excerpt"></p>
+      <!-- Note match badge + note excerpt -->
+      <template v-if="item.match_source?.includes('note')">
+        <span class="row__note-badge">From your note</span>
+        <p v-if="item.note_excerpt" class="row__excerpt row__excerpt--note" v-html="item.note_excerpt"></p>
+      </template>
     </div>
 
     <button
@@ -123,6 +130,35 @@ const time = computed(() => relativeShort(props.item.published_at || props.item.
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.row__excerpt {
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.row__excerpt :deep(em) {
+  font-style: normal;
+  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.row__note-badge {
+  display: inline-block;
+  margin-top: var(--space-1);
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
+  color: var(--accent-color);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.row__excerpt--note {
+  font-style: italic;
 }
 
 .row__star {

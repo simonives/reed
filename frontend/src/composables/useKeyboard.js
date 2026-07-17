@@ -83,6 +83,9 @@ export function useKeyboard(options = {}) {
         gPending = true
         gTimer = setTimeout(clearPrefix, 1500)
         break
+      case '/':
+        window.dispatchEvent(new CustomEvent('reed:focus-search'))
+        break
       default:
         return // unhandled key: let the browser have it
     }

@@ -59,7 +59,8 @@ export const useItemsStore = defineStore('items', () => {
     detail.value = null
     detailError.value = null
     try {
-      const body = await api.get('/items', { params: currentParams(0) })
+      const endpoint = ui.view.type === 'search' ? '/search' : '/items'
+      const body = await api.get(endpoint, { params: currentParams(0) })
       if (token !== loadToken) return
       items.value = body.data
       total.value = body.meta.total
@@ -80,7 +81,8 @@ export const useItemsStore = defineStore('items', () => {
     const token = loadToken
     loading.value = true
     try {
-      const body = await api.get('/items', { params: currentParams(items.value.length) })
+      const endpoint = ui.view.type === 'search' ? '/search' : '/items'
+      const body = await api.get(endpoint, { params: currentParams(items.value.length) })
       if (token !== loadToken) return // a fresh load() superseded this page
       items.value.push(...body.data)
       total.value = body.meta.total

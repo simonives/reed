@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import html as _html
 import json
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -13,7 +15,7 @@ import kuzu
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 _FEED_COLS = """
     f.id AS id, f.url AS url, f.title AS title, f.display_name AS display_name,
@@ -49,6 +51,51 @@ def _rows(result: kuzu.QueryResult | list[kuzu.QueryResult]) -> list[dict[str, A
     while result.has_next():
         rows.append(dict(zip(cols, result.get_next(), strict=True)))
     return rows
+
+
+def _strip_html(text: str) -> str:
+    return re.sub(r"<[^>]*(?:>|$)", "", text)
+
+
+def _make_excerpt(text: str, q: str, window: int = 20) -> str | None:
+    """Return a ~window-word excerpt around the first query term match, with <em> tags."""
+    if not text:
+        return None
+    clean = _strip_html(text)
+    words = clean.split()
+    if not words:
+        return None
+    terms = [t for t in q.lower().split() if t]
+    for i, word in enumerate(words):
+        if any(t in word.lower() for t in terms):
+            start = max(0, i - 8)
+            end = min(len(words), start + window)
+            parts = []
+            for w in words[start:end]:
+                esc = _html.escape(w)
+                parts.append(f"<em>{esc}</em>" if any(t in w.lower() for t in terms) else esc)
+            result = " ".join(parts)
+            if start > 0:
+                result = "…" + result
+            if end < len(words):
+                result = result + "…"
+            return result
+    return None
+
+
+def _match_source(item: dict[str, Any], q: str) -> list[str]:
+    """Return which fields matched the query: 'content', 'note', or both."""
+    terms = [t for t in q.lower().split() if t]
+    sources: list[str] = []
+    content_text = " ".join(
+        filter(None, [item.get("title"), item.get("summary"), item.get("content")])
+    ).lower()
+    if any(t in content_text for t in terms):
+        sources.append("content")
+    note_body = (item.get("note_body") or "").lower()
+    if note_body and any(t in note_body for t in terms):
+        sources.append("note")
+    return sources or ["content"]  # FTS matched — assume content if we can't tell
 
 
 class GraphService:
@@ -112,6 +159,7 @@ class GraphService:
                 starred BOOLEAN,
                 reader_content STRING,
                 reader_fetched_at TIMESTAMP,
+                note_body STRING,
                 PRIMARY KEY (guid)
             )
         """)
@@ -142,6 +190,16 @@ class GraphService:
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS TAGGED(FROM Item TO Tag)")
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS FEED_TAGGED(FROM Feed TO Tag)")
         self._conn.execute("CREATE REL TABLE IF NOT EXISTS HAS_NOTE(FROM Item TO Note)")
+        # FTS index — CREATE_FTS_INDEX has no IF NOT EXISTS so we suppress errors.
+        # On existing v3 DBs the column doesn't exist yet; _migrate_to_v4 creates it.
+        _fts_cypher = (
+            "CALL CREATE_FTS_INDEX('Item', 'item_fts',"
+            " ['title', 'summary', 'content', 'note_body'])"
+        )
+        try:
+            self._conn.execute(_fts_cypher)
+        except Exception as e:
+            logger.warning("FTS index creation skipped in _init_schema: %s", e)
 
     def _table_names(self) -> set[str]:
         rows = _rows(self._conn.execute("CALL show_tables() RETURN name"))
@@ -160,7 +218,7 @@ class GraphService:
         stored = self.get_config_values().get("schema_version", 1)
         if stored >= _SCHEMA_VERSION:
             return
-        migrations = [(2, self._migrate_to_v2), (3, self._migrate_to_v3)]
+        migrations = [(2, self._migrate_to_v2), (3, self._migrate_to_v3), (4, self._migrate_to_v4)]
         for target, run in migrations:
             if target > stored:
                 run()
@@ -251,6 +309,25 @@ class GraphService:
                 discarded,
             )
         self._conn.execute("DROP TABLE _NoteLegacy")
+
+    def _migrate_to_v4(self) -> None:
+        if "note_body" not in self._column_names("Item"):
+            self._conn.execute("ALTER TABLE Item ADD note_body STRING")
+        # CREATE_FTS_INDEX has no IF NOT EXISTS; suppress errors.
+        # May fail on stripped legacy DBs missing v1 columns — _init_schema
+        # will retry on the next open once all columns are present.
+        try:
+            self._conn.execute(
+                "CALL CREATE_FTS_INDEX('Item', 'item_fts',"
+                " ['title', 'summary', 'content', 'note_body'])"
+            )
+        except Exception as e:
+            logger.warning("FTS index creation skipped in _migrate_to_v4: %s", e)
+        # Backfill note_body from existing HAS_NOTE edges.
+        self._conn.execute("""
+            MATCH (i:Item)-[:HAS_NOTE]->(n:Note)
+            SET i.note_body = n.body
+        """)
 
     def _exists(self, query: str, params: dict[str, Any]) -> bool:
         rows = _rows(self._conn.execute(query, params))
@@ -468,6 +545,9 @@ class GraphService:
         """
         item_id: str | None = None
         if not self.item_exists(guid):
+            if not summary and content:
+                clean = _strip_html(content)
+                summary = clean[:300].rsplit(" ", 1)[0] + "…" if len(clean) > 300 else clean
             item_id = str(uuid.uuid4())
             self._conn.execute(
                 """
@@ -587,6 +667,90 @@ class GraphService:
         for item in items:
             item["tags"] = tags_by_guid.get(item["guid"], [])
         return items, total
+
+    def search_items(
+        self,
+        q: str,
+        feed_id: str | None = None,
+        tag: str | None = None,
+        author: str | None = None,
+        unread_only: bool = False,
+        starred_only: bool = False,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        clauses: list[str] = []
+        params: dict[str, Any] = {"q": q, "offset": offset, "limit": limit}
+
+        if feed_id is not None:
+            feed_clause = " MATCH (f:Feed)-[:HAS_ITEM]->(i)"
+            clauses.append("f.id = $feed_id")
+            params["feed_id"] = feed_id
+        else:
+            feed_clause = " OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(i)"
+
+        tag_clause = ""
+        if tag is not None:
+            tag_clause = " MATCH (i)-[:TAGGED]->(t:Tag {name: $tag})"
+            params["tag"] = tag
+
+        if author is not None:
+            clauses.append("i.author = $author")
+            params["author"] = author
+        if unread_only:
+            clauses.append("i.read = false")
+        if starred_only:
+            clauses.append("i.starred = true")
+        if since is not None:
+            clauses.append("i.published_at >= $since")
+            params["since"] = since
+        if until is not None:
+            clauses.append("i.published_at <= $until")
+            params["until"] = until
+
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        prefix = (
+            f"CALL QUERY_FTS_INDEX('Item', 'item_fts', $q) "
+            f"WITH node AS i, score{feed_clause}{tag_clause}{where}"
+        )
+
+        # count query must not include $offset/$limit — Kuzu rejects unused params
+        count_params = {k: v for k, v in params.items() if k not in ("offset", "limit")}
+        count_rows = _rows(self._conn.execute(f"{prefix} RETURN count(i) AS total", count_params))
+        total = int(count_rows[0]["total"]) if count_rows else 0
+
+        rows = _rows(
+            self._conn.execute(
+                f"""
+                {prefix}
+                RETURN i.id AS id, i.guid AS guid, i.url AS url, i.title AS title,
+                       i.summary AS summary, i.content AS content,
+                       i.note_body AS note_body, i.author AS author,
+                       i.published_at AS published_at, i.fetched_at AS fetched_at,
+                       i.read AS read, i.starred AS starred, i.word_count AS word_count,
+                       score,
+                       f.id AS feed_id, coalesce(f.display_name, f.title) AS feed_title
+                ORDER BY score DESC
+                SKIP $offset LIMIT $limit
+                """,
+                {**params},
+            )
+        )
+
+        for item in rows:
+            # Try each field in priority order; use first field that yields a match
+            excerpt = None
+            for field in ("summary", "content", "title"):
+                excerpt = _make_excerpt(item.get(field) or "", q)
+                if excerpt is not None:
+                    break
+            item["excerpt"] = excerpt
+            item["note_excerpt"] = _make_excerpt(item.get("note_body") or "", q)
+            item["match_source"] = _match_source(item, q)
+
+        return rows, total
 
     def _tags_for_items(self, guids: list[str]) -> dict[str, list[str]]:
         if not guids:
@@ -776,6 +940,10 @@ class GraphService:
                 """,
                 {"item_id": item_id, "id": str(uuid.uuid4()), "body": body, "now": now},
             )
+        self._conn.execute(
+            "MATCH (i:Item) WHERE i.id = $id SET i.note_body = $body",
+            {"id": item_id, "body": body},
+        )
         return self.get_note(item_id)
 
     def delete_note(self, item_id: str) -> bool:
@@ -784,6 +952,10 @@ class GraphService:
         self._conn.execute(
             "MATCH (i:Item)-[:HAS_NOTE]->(n:Note) WHERE i.id = $item_id DETACH DELETE n",
             {"item_id": item_id},
+        )
+        self._conn.execute(
+            "MATCH (i:Item) WHERE i.id = $id SET i.note_body = NULL",
+            {"id": item_id},
         )
         return True
 

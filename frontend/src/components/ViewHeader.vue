@@ -5,6 +5,8 @@
       <span v-if="items.total" class="view-header__count">({{ items.total }})</span>
     </h1>
 
+    <SearchBar class="view-header__search" />
+
     <div class="view-header__actions">
       <span v-if="catchUpError" class="view-header__error" role="alert">{{ catchUpError }}</span>
       <button v-if="items.canCatchUp" class="btn" title="Mark all as read" @click="catchUp">
@@ -17,6 +19,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import SearchBar from './SearchBar.vue'
 import ViewChrome from './ViewChrome.vue'
 import { useItemsStore } from '../stores/items'
 import { useUiStore } from '../stores/ui'
@@ -57,11 +60,17 @@ async function catchUp() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .view-header__count {
   color: var(--text-muted);
   font-weight: 400;
+}
+
+.view-header__search {
+  flex: 1;
+  min-width: 0;
 }
 
 .view-header__actions {
