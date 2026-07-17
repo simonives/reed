@@ -135,6 +135,65 @@
               :disabled="opml.loading"
             >{{ opml.loading ? 'Exporting…' : 'Export subscriptions' }}</button>
           </div>
+
+          <div class="ie-section">
+            <h3>Export backup</h3>
+            <p class="ie-hint">Download all your feeds, read state, stars, notes, and tags as JSON.</p>
+            <button
+              type="button"
+              class="btn btn--primary"
+              data-testid="export-backup-btn"
+              @click="onExportBackup"
+              :disabled="data.loading"
+            >{{ data.loading ? 'Exporting…' : 'Download backup' }}</button>
+          </div>
+
+          <div class="ie-section">
+            <h3>Restore from backup</h3>
+            <p class="ie-hint ie-warn">⚠ This will permanently replace all your feeds, items, notes, and tags. Export a backup first.</p>
+
+            <div v-if="!data.restoreResult">
+              <label class="file-label">
+                Choose backup file
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  @change="onRestoreFileSelect"
+                  :disabled="data.loading"
+                />
+              </label>
+              <p v-if="restoreFile" class="ie-hint">{{ restoreFile.name }}</p>
+              <label v-if="restoreFile" class="file-label">
+                Type "restore" to confirm
+                <input
+                  type="text"
+                  v-model="restoreConfirm"
+                  placeholder="restore"
+                  :disabled="data.loading"
+                />
+              </label>
+              <div class="ie-actions">
+                <button
+                  type="button"
+                  class="btn btn--danger"
+                  data-testid="restore-btn"
+                  :disabled="restoreConfirm !== 'restore' || !restoreFile || data.loading"
+                  @click="onRestore"
+                >{{ data.loading ? 'Restoring…' : 'Restore' }}</button>
+              </div>
+              <p v-if="data.error" class="error" role="alert">{{ data.error }}</p>
+            </div>
+
+            <div v-if="data.restoreResult" class="restore-result">
+              <p>
+                Restored {{ data.restoreResult.feeds }} feed(s),
+                {{ data.restoreResult.items }} item(s),
+                {{ data.restoreResult.notes }} note(s),
+                {{ data.restoreResult.tags }} tag(s).
+              </p>
+              <button type="button" class="btn btn--primary" @click="reloadPage">Reload</button>
+            </div>
+          </div>
         </div>
 
         <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -155,6 +214,7 @@ import { useConfigStore } from '../stores/config'
 import { useFeedsStore } from '../stores/feeds'
 import { useOpmlStore } from '../stores/opml'
 import { useUiStore } from '../stores/ui'
+import { useDataStore } from '../stores/data'
 
 // The `value` stacks must match the backend allowlist exactly — the canonical
 // source is FONT_FAMILY_STACKS in src/reed/config.py; a mismatch means a 400 on save.
@@ -174,10 +234,13 @@ const config = useConfigStore()
 const ui = useUiStore()
 const opml = useOpmlStore()
 const feeds = useFeedsStore()
+const data = useDataStore()
 
 const tab = ref('reading')
 const saving = ref(false)
 const error = ref('')
+const restoreFile = ref(null)
+const restoreConfirm = ref('')
 // Draft seeded from current config; only the diff is saved.
 const draft = reactive(Object.fromEntries(EDITABLE.map((k) => [k, config.values[k]])))
 
@@ -252,6 +315,29 @@ function diff() {
   return changed
 }
 
+async function onExportBackup() {
+  await data.exportBackup()
+}
+
+function onRestoreFileSelect(event) {
+  restoreFile.value = event.target.files?.[0] ?? null
+  restoreConfirm.value = ''
+}
+
+async function onRestore() {
+  if (!restoreFile.value) return
+  try {
+    await data.restoreBackup(restoreFile.value)
+  } catch {
+    restoreFile.value = null
+    restoreConfirm.value = ''
+  }
+}
+
+function reloadPage() {
+  window.location.reload()
+}
+
 function close() {
   ui.showSettings = false
 }
@@ -314,4 +400,8 @@ async function onSave() {
 .ie-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .import-result { font-size: var(--font-size-sm); display: flex; flex-direction: column; gap: var(--space-2); }
 .failed-list { padding-left: var(--space-4); color: var(--color-danger); }
+.ie-warn { color: var(--color-danger); }
+.restore-result { font-size: var(--font-size-sm); display: flex; flex-direction: column; gap: var(--space-2); }
+.btn--danger { background: var(--color-danger); color: #fff; border: none; }
+.btn--danger:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

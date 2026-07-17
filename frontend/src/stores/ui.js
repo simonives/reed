@@ -48,6 +48,16 @@ export const useUiStore = defineStore('ui', () => {
     editingFeedId.value = null
   }
 
+  const anyOverlayOpen = computed(
+    () => showSettings.value || showAddFeed.value || editingFeedId.value !== null,
+  )
+
+  function closeOverlays() {
+    showSettings.value = false
+    showAddFeed.value = false
+    editingFeedId.value = null
+  }
+
   // Query params for GET /items, derived from the active view.
   const queryParams = computed(() => {
     const current = view.value
@@ -78,5 +88,7 @@ export const useUiStore = defineStore('ui', () => {
     toggleAddFeed,
     editFeed,
     closeFeedEditor,
+    anyOverlayOpen,
+    closeOverlays,
   }
 })

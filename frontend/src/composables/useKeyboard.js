@@ -39,6 +39,12 @@ export function useKeyboard(options = {}) {
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return
 
+    // Close overlays on Escape (#61); block all other shortcuts behind overlays (#62).
+    if (ui.anyOverlayOpen) {
+      if (event.key === 'Escape') ui.closeOverlays()
+      return
+    }
+
     if (gPending) {
       clearPrefix()
       if (handleGoTo(event.key) !== null) {

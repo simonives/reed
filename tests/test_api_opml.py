@@ -74,6 +74,15 @@ class TestPreview:
         )
         assert r.status_code == 401
 
+    def test_preview_over_size_limit_returns_413(self, authed, monkeypatch):
+        import reed.api.opml as opml_module
+        monkeypatch.setattr(opml_module, "MAX_OPML_BYTES", 10)
+        r = authed.post(
+            "/api/v1/opml/preview",
+            files={"file": ("feeds.opml", b"<opml>" + b"x" * 11, "application/xml")},
+        )
+        assert r.status_code == 413
+
 
 class TestImport:
     def test_adds_new_feed_with_tags(self, authed):

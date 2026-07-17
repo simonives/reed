@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { api, getApiKey } from '../api/client'
+import { api } from '../api/client'
+import { _downloadBlob } from './data'
 
 export const useOpmlStore = defineStore('opml', () => {
   const previewData = ref(null)
@@ -45,22 +46,7 @@ export const useOpmlStore = defineStore('opml', () => {
     loading.value = true
     error.value = ''
     try {
-      const resp = await fetch('/api/v1/opml/export', {
-        headers: { 'X-API-Key': getApiKey() },
-      })
-      if (!resp.ok) throw new Error(`Export failed: ${resp.status}`)
-      const blob = await resp.blob()
-      const disposition = resp.headers.get('content-disposition') || ''
-      const match = disposition.match(/filename="([^"]+)"/)
-      const filename = match ? match[1] : 'reed-feeds.opml'
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      await _downloadBlob('/api/v1/opml/export', 'reed-feeds.opml')
     } catch (err) {
       error.value = err.message || 'Export failed.'
       throw err

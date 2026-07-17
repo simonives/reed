@@ -105,6 +105,8 @@ class GraphService:
     """
 
     def __init__(self, db_path: str) -> None:
+        import pathlib
+        pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = kuzu.Database(db_path)
         self._conn = kuzu.Connection(self._db)
         self._ensure_schema()
@@ -958,6 +960,250 @@ class GraphService:
             {"id": item_id},
         )
         return True
+
+    # --- Data portability ---
+
+    def export_data(self) -> dict[str, Any]:
+        """Return a full backup dict (version 1 format). Excludes schema_version from config."""
+        feeds_raw = self.list_feeds()
+        feeds = [
+            {
+                "id": f["id"],
+                "url": f["url"],
+                "title": f["title"],
+                "display_name": f["display_name"],
+                "description": f["description"],
+                "site_url": f["site_url"],
+                "poll_interval_minutes": f["poll_interval_minutes"],
+                "reader_mode_enabled": f["reader_mode_enabled"],
+                "subscribed_at": f["subscribed_at"].isoformat() if f["subscribed_at"] else None,
+                "tags": f["tags"],
+            }
+            for f in feeds_raw
+        ]
+
+        item_rows = _rows(
+            self._conn.execute("""
+                MATCH (f:Feed)-[:HAS_ITEM]->(i:Item)
+                RETURN i.id AS id, i.guid AS guid, i.url AS url, i.title AS title,
+                       i.author AS author, i.word_count AS word_count,
+                       i.published_at AS published_at, i.fetched_at AS fetched_at,
+                       i.read AS read, i.starred AS starred, f.url AS feed_url
+                ORDER BY i.fetched_at ASC
+            """)
+        )
+        item_tag_rows = _rows(
+            self._conn.execute(
+                "MATCH (i:Item)-[:TAGGED]->(t:Tag) RETURN i.id AS item_id, t.name AS tag_name"
+            )
+        )
+        tags_by_item: dict[str, list[str]] = {}
+        for row in item_tag_rows:
+            tags_by_item.setdefault(row["item_id"], []).append(row["tag_name"])
+        items = [
+            {
+                "id": r["id"],
+                "guid": r["guid"],
+                "url": r["url"],
+                "title": r["title"],
+                "author": r["author"],
+                "word_count": r["word_count"] or 0,
+                "published_at": r["published_at"].isoformat() if r["published_at"] else None,
+                "fetched_at": r["fetched_at"].isoformat() if r["fetched_at"] else None,
+                "read": r["read"] or False,
+                "starred": r["starred"] or False,
+                "feed_url": r["feed_url"],
+                "tags": tags_by_item.get(r["id"], []),
+            }
+            for r in item_rows
+        ]
+
+        note_rows = _rows(
+            self._conn.execute("""
+                MATCH (i:Item)-[:HAS_NOTE]->(n:Note)
+                RETURN i.id AS item_id, n.body AS body,
+                       n.created_at AS created_at, n.updated_at AS updated_at
+            """)
+        )
+        notes = [
+            {
+                "item_id": n["item_id"],
+                "body": n["body"],
+                "created_at": n["created_at"].isoformat() if n["created_at"] else None,
+                "updated_at": n["updated_at"].isoformat() if n["updated_at"] else None,
+            }
+            for n in note_rows
+        ]
+
+        tag_nodes = _rows(
+            self._conn.execute(
+                "MATCH (t:Tag) RETURN t.id AS id, t.name AS name ORDER BY name"
+            )
+        )
+        tags = [{"id": t["id"], "name": t["name"]} for t in tag_nodes]
+
+        config = {k: v for k, v in self.get_config_values().items() if k != "schema_version"}
+
+        return {
+            "version": 1,
+            "exported_at": datetime.now(UTC).isoformat(),
+            "feeds": feeds,
+            "items": items,
+            "notes": notes,
+            "tags": tags,
+            "config": config,
+        }
+
+    def restore_data(self, backup: dict[str, Any]) -> dict[str, Any]:
+        """Clear all data and re-insert from backup. Schema is never touched."""
+        self._conn.execute("BEGIN TRANSACTION")
+        try:
+            result = self._restore_data_inner(backup)
+            self._conn.execute("COMMIT")
+            return result
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def _restore_data_inner(self, backup: dict[str, Any]) -> dict[str, Any]:
+        # Delete edges before nodes (order is mandatory).
+        for rel in ("TAGGED", "FEED_TAGGED", "HAS_NOTE", "HAS_ITEM"):
+            self._conn.execute(f"MATCH ()-[r:{rel}]->() DELETE r")
+        for node in ("Note", "Item", "Tag", "Feed", "Config"):
+            self._conn.execute(f"MATCH (n:{node}) DETACH DELETE n")
+
+        # Config — restore from backup then stamp current schema_version.
+        for key, value in backup.get("config", {}).items():
+            self.set_config_value(key, value)
+        self.set_config_value("schema_version", _SCHEMA_VERSION)
+
+        # Tags (with original UUIDs so tag-name lookups stay consistent).
+        for tag in backup.get("tags", []):
+            self._conn.execute(
+                "CREATE (:Tag {id: $id, name: $name})",
+                {"id": tag["id"], "name": tag["name"]},
+            )
+
+        # Feeds (no tag edges yet).
+        for feed in backup.get("feeds", []):
+            self._conn.execute(
+                """
+                CREATE (:Feed {
+                    url: $url, id: $id, title: $title, display_name: $display_name,
+                    description: $description, site_url: $site_url,
+                    poll_interval_minutes: $poll_interval_minutes,
+                    reader_mode_enabled: $reader_mode_enabled,
+                    is_active: true, consecutive_errors: 0,
+                    subscribed_at: $subscribed_at
+                })
+                """,
+                {
+                    "url": feed["url"],
+                    "id": feed["id"],
+                    "title": feed.get("title") or "",
+                    "display_name": feed.get("display_name"),
+                    "description": feed.get("description") or "",
+                    "site_url": feed.get("site_url") or "",
+                    "poll_interval_minutes": feed.get("poll_interval_minutes"),
+                    "reader_mode_enabled": feed.get("reader_mode_enabled"),
+                    "subscribed_at": (
+                        datetime.fromisoformat(feed["subscribed_at"])
+                        if feed.get("subscribed_at")
+                        else datetime.now(UTC)
+                    ),
+                },
+            )
+
+        # Items with HAS_ITEM edges.
+        for item in backup.get("items", []):
+            self._conn.execute(
+                """
+                CREATE (:Item {
+                    guid: $guid, id: $id, url: $url, title: $title,
+                    summary: $summary, content: $content, author: $author,
+                    word_count: $word_count, published_at: $published_at,
+                    fetched_at: $fetched_at, read: $read, starred: $starred
+                })
+                """,
+                {
+                    "guid": item["guid"],
+                    "id": item["id"],
+                    "url": item["url"],
+                    "title": item.get("title") or "",
+                    "summary": "",
+                    "content": "",
+                    "author": item.get("author") or "",
+                    "word_count": item.get("word_count") or 0,
+                    "published_at": (
+                        datetime.fromisoformat(item["published_at"])
+                        if item.get("published_at")
+                        else None
+                    ),
+                    "fetched_at": (
+                        datetime.fromisoformat(item["fetched_at"])
+                        if item.get("fetched_at")
+                        else datetime.now(UTC)
+                    ),
+                    "read": item.get("read", False),
+                    "starred": item.get("starred", False),
+                },
+            )
+            self._conn.execute(
+                "MATCH (f:Feed {url: $feed_url}), (i:Item {id: $id}) CREATE (f)-[:HAS_ITEM]->(i)",
+                {"feed_url": item["feed_url"], "id": item["id"]},
+            )
+
+        # Notes with HAS_NOTE edges; also sync note_body for FTS.
+        for note in backup.get("notes", []):
+            self._conn.execute(
+                """
+                MATCH (i:Item {id: $item_id})
+                CREATE (i)-[:HAS_NOTE]->(:Note {
+                    id: $note_id, body: $body,
+                    created_at: $created_at, updated_at: $updated_at
+                })
+                """,
+                {
+                    "item_id": note["item_id"],
+                    "note_id": str(uuid.uuid4()),
+                    "body": note["body"],
+                    "created_at": (
+                        datetime.fromisoformat(note["created_at"])
+                        if note.get("created_at")
+                        else datetime.now(UTC)
+                    ),
+                    "updated_at": (
+                        datetime.fromisoformat(note["updated_at"])
+                        if note.get("updated_at")
+                        else datetime.now(UTC)
+                    ),
+                },
+            )
+            self._conn.execute(
+                "MATCH (i:Item) WHERE i.id = $id SET i.note_body = $body",
+                {"id": note["item_id"], "body": note["body"]},
+            )
+
+        # Tag edges.
+        for feed in backup.get("feeds", []):
+            for tag_name in feed.get("tags", []):
+                self._conn.execute(
+                    "MATCH (f:Feed {id: $id}), (t:Tag {name: $name}) MERGE (f)-[:FEED_TAGGED]->(t)",
+                    {"id": feed["id"], "name": tag_name},
+                )
+        for item in backup.get("items", []):
+            for tag_name in item.get("tags", []):
+                self._conn.execute(
+                    "MATCH (i:Item {id: $id}), (t:Tag {name: $name}) MERGE (i)-[:TAGGED]->(t)",
+                    {"id": item["id"], "name": tag_name},
+                )
+
+        return {
+            "feeds": len(backup.get("feeds", [])),
+            "items": len(backup.get("items", [])),
+            "notes": len(backup.get("notes", [])),
+            "tags": len(backup.get("tags", [])),
+        }
 
     def close(self) -> None:
         self._conn.close()

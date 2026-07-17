@@ -15,6 +15,8 @@ from ..opml import build_opml, parse_opml
 from .deps import get_graph, require_api_key
 from .schemas import envelope
 
+MAX_OPML_BYTES = 2 * 1024 * 1024  # 2 MB
+
 router = APIRouter(
     prefix="/api/v1/opml",
     tags=["opml"],
@@ -37,7 +39,12 @@ async def preview_opml(
     file: UploadFile = File(...),
     graph: GraphService = Depends(get_graph),
 ) -> dict[str, Any]:
-    data = await file.read()
+    data = await file.read(MAX_OPML_BYTES + 1)
+    if len(data) > MAX_OPML_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"OPML file exceeds {MAX_OPML_BYTES // (1024 * 1024)} MB limit.",
+        )
     try:
         result = parse_opml(data)
     except ValueError as exc:
