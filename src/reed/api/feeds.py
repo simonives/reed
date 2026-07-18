@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -91,7 +92,7 @@ def _feed_or_404(graph: GraphService, feed_id: str) -> dict[str, Any]:
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
-    if graph.feed_exists(body.url):
+    if await asyncio.to_thread(graph.feed_exists, body.url):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Feed already subscribed")
 
     try:
@@ -104,7 +105,8 @@ async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) 
     parsed = feedparser.parse(response.content)
     feed_meta = parsed.feed
 
-    feed = graph.create_feed(
+    feed = await asyncio.to_thread(
+        graph.create_feed,
         url=body.url,
         title=feed_meta.get("title", body.url),
         description=feed_meta.get("description", ""),
@@ -113,7 +115,8 @@ async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) 
         poll_interval_minutes=body.poll_interval_minutes,
         tags=body.tags,
     )
-    return envelope(feed_response(feed, effective_config(graph)))
+    config = await asyncio.to_thread(effective_config, graph)
+    return envelope(feed_response(feed, config))
 
 
 @router.post("/discover")
@@ -127,19 +130,19 @@ async def discover(body: DiscoverRequest) -> dict[str, Any]:
 
 
 @router.get("")
-async def list_feeds(graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+def list_feeds(graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     config = effective_config(graph)
     return envelope([feed_response(f, config) for f in graph.list_feeds()])
 
 
 @router.get("/{feed_id}")
-async def get_feed(feed_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+def get_feed(feed_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     feed = _feed_or_404(graph, feed_id)
     return envelope(feed_response(feed, effective_config(graph)))
 
 
 @router.patch("/{feed_id}")
-async def update_feed(
+def update_feed(
     feed_id: str, body: FeedUpdate, graph: GraphService = Depends(get_graph)
 ) -> dict[str, Any]:
     updated = graph.update_feed(feed_id, body.model_dump(exclude_unset=True))
@@ -149,7 +152,7 @@ async def update_feed(
 
 
 @router.delete("/{feed_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_feed(feed_id: str, graph: GraphService = Depends(get_graph)) -> None:
+def delete_feed(feed_id: str, graph: GraphService = Depends(get_graph)) -> None:
     if not graph.delete_feed(feed_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feed not found")
 
@@ -160,15 +163,16 @@ async def refresh_feed(
     graph: GraphService = Depends(get_graph),
     poller: FeedPoller = Depends(get_poller),
 ) -> dict[str, Any]:
-    feed = _feed_or_404(graph, feed_id)
+    feed = await asyncio.to_thread(_feed_or_404, graph, feed_id)
     await poller.refresh_feed(feed)
-    refreshed = graph.get_feed(feed_id)
+    refreshed = await asyncio.to_thread(graph.get_feed, feed_id)
     assert refreshed is not None
-    return envelope(feed_response(refreshed, effective_config(graph)))
+    config = await asyncio.to_thread(effective_config, graph)
+    return envelope(feed_response(refreshed, config))
 
 
 @router.get("/{feed_id}/items")
-async def feed_items(
+def feed_items(
     feed_id: str,
     unread: bool = False,
     starred: bool = False,

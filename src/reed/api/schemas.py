@@ -21,6 +21,10 @@ def paginated(items: list[dict[str, Any]], total: int, offset: int) -> dict[str,
     return envelope(items, meta={"total": total, "has_more": offset + len(items) < total})
 
 
+def cursor_paginated(items: list[dict[str, Any]], next_cursor: str | None) -> dict[str, Any]:
+    return envelope(items, meta={"next_cursor": next_cursor})
+
+
 def feed_response(feed: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     effective = effective_feed_settings(feed, config)
     effective_interval = effective["poll_interval_minutes"]

@@ -10,6 +10,32 @@ import pytest
 from reed.graph import GraphService, _SCHEMA_VERSION
 
 
+@pytest.fixture
+def graph_with_data(tmp_path):
+    """A graph with one feed and one item, ready for enrichment tests."""
+    g = GraphService(str(tmp_path / "test.kuzu"))
+    g.create_feed(
+        url="https://example.com/feed",
+        title="Example Feed",
+        description="desc",
+        site_url="https://example.com",
+    )
+    g.create_item(
+        feed_url="https://example.com/feed",
+        guid="https://example.com/1",
+        url="https://example.com/1",
+        title="Hello world",
+        summary="machine learning advances",
+        content="<p>Hello world</p>",
+        author="Jane",
+        word_count=3,
+        published_at=datetime(2026, 7, 1, tzinfo=UTC),
+        fetched_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    yield g
+    g.close()
+
+
 def _make_gs(tmp_path):
     return GraphService(str(tmp_path / "test.kuzu"))
 
@@ -191,3 +217,74 @@ class TestRestoreData:
             gs.restore_data(bad_backup)
         # Transaction should have rolled back — original data must still be present
         assert len(gs.list_feeds()) == original_feed_count
+
+
+class TestExportRestoreTopics:
+    def test_export_includes_topics_and_about_edges(self, graph_with_data):
+        g = graph_with_data
+        # Enrich an item so there are topics to export
+        items = g.get_unenriched_items()
+        assert items, "fixture must have at least one item"
+        item = items[0]
+        g.enrich_item(item["id"], [("rss feeds", 0.1), ("open source", 0.2)])
+        backup = g.export_data()
+        assert "topics" in backup
+        assert "about_edges" in backup
+        assert len(backup["topics"]) >= 1
+        assert len(backup["about_edges"]) >= 1
+        # topics must not include item_count (derived)
+        for t in backup["topics"]:
+            assert "item_count" not in t
+            assert "id" in t and "name" in t
+        # about_edges must use natural keys
+        for e in backup["about_edges"]:
+            assert "item_guid" in e
+            assert "topic_name" in e
+            assert "score" in e
+
+    def test_restore_round_trips_topics(self, graph_with_data, tmp_path):
+        g = graph_with_data
+        items = g.get_unenriched_items()
+        item = items[0]
+        g.enrich_item(item["id"], [("machine learning", 0.15)])
+        backup = g.export_data()
+        # Restore into a fresh graph
+        g2 = GraphService(str(tmp_path / "restore_test.kuzu"))
+        g2.restore_data(backup)
+        topics = g2.get_item_topics(item["id"])
+        assert any(t["name"] == "machine learning" for t in topics)
+        g2.close()
+
+    def test_restore_clears_ghost_topics(self, graph_with_data, tmp_path):
+        g = graph_with_data
+        # Enrich to create topics
+        items = g.get_unenriched_items()
+        item = items[0]
+        g.enrich_item(item["id"], [("ghost topic", 0.5)])
+        backup_before = g.export_data()
+        # Take a backup WITHOUT topics (simulate old backup)
+        backup_no_topics = {k: v for k, v in backup_before.items()
+                            if k not in ("topics", "about_edges")}
+        g.restore_data(backup_no_topics)
+        # Ghost topics must be gone
+        all_topics, _ = g.get_topics()
+        assert all_topics == []
+
+    def test_restore_recomputes_item_count(self, graph_with_data, tmp_path):
+        g = graph_with_data
+        items = g.get_unenriched_items()
+        item = items[0]
+        g.enrich_item(item["id"], [("test topic", 0.3)])
+        backup = g.export_data()
+        g.restore_data(backup)
+        topics, _ = g.get_topics()
+        assert any(t["name"] == "test topic" and t["item_count"] >= 1 for t in topics)
+
+    def test_restore_returns_verified_counts(self, graph_with_data):
+        g = graph_with_data
+        backup = g.export_data()
+        result = g.restore_data(backup)
+        # Result must reflect actual DB counts, not input lengths
+        assert "feeds" in result and "items" in result
+        actual_feeds = g.list_feeds()
+        assert result["feeds"] == len(actual_feeds)

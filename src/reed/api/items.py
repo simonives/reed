@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import binascii
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,7 +16,24 @@ from pydantic import BaseModel
 from ..graph import GraphService
 from ..reader import extract_article
 from .deps import get_graph, require_api_key
-from .schemas import envelope, item_detail_response, item_list_response, paginated
+from .schemas import cursor_paginated, envelope, item_detail_response, item_list_response, paginated
+
+def _encode_cursor(item: dict[str, Any]) -> str:
+    ts = item.get("published_at") or item.get("fetched_at")
+    payload = {"ts": ts.isoformat() if ts else None, "guid": item["guid"]}
+    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime | None, str]:
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+        ts_str = payload["ts"]
+        guid = str(payload["guid"])
+        ts = datetime.fromisoformat(ts_str) if ts_str else None
+        return ts, guid
+    except (binascii.Error, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+        raise ValueError("Invalid cursor") from exc
+
 
 router = APIRouter(
     prefix="/api/v1/items",
@@ -46,8 +67,14 @@ def _item_or_404(graph: GraphService, item_id: str) -> dict[str, Any]:
     return item
 
 
+def _item_envelope(item: dict[str, Any], topics: list[dict[str, Any]]) -> dict[str, Any]:
+    response = item_detail_response(item)
+    response["topics"] = topics
+    return envelope(response)
+
+
 @router.get("")
-async def list_items(
+def list_items(
     feed_id: str | None = None,
     tag: str | None = None,
     unread: bool = False,
@@ -55,10 +82,19 @@ async def list_items(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    cursor: str | None = Query(default=None),
     graph: GraphService = Depends(get_graph),
 ) -> dict[str, Any]:
-    items, total = graph.list_items(
+    cursor_ts: datetime | None = None
+    cursor_guid: str | None = None
+    if cursor is not None:
+        try:
+            cursor_ts, cursor_guid = _decode_cursor(cursor)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
+            )
+    items = graph.list_items_cursor(
         feed_id=feed_id,
         tag=tag,
         unread_only=unread,
@@ -66,13 +102,15 @@ async def list_items(
         since=since,
         until=until,
         limit=limit,
-        offset=offset,
+        cursor_ts=cursor_ts,
+        cursor_guid=cursor_guid,
     )
-    return paginated([item_list_response(i) for i in items], total, offset)
+    next_cursor = _encode_cursor(items[-1]) if len(items) == limit else None
+    return cursor_paginated([item_list_response(i) for i in items], next_cursor)
 
 
 @router.post("/mark-read")
-async def mark_read(
+def mark_read(
     body: MarkReadRequest, graph: GraphService = Depends(get_graph)
 ) -> dict[str, Any]:
     if body.feed_id is not None and not graph.feed_exists_by_id(body.feed_id):
@@ -82,26 +120,24 @@ async def mark_read(
 
 
 @router.get("/{item_id}")
-async def get_item(item_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+def get_item(item_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     item = _item_or_404(graph, item_id)
-    response = item_detail_response(item)
-    response["topics"] = graph.get_item_topics(item["id"])
-    return envelope(response)
+    return _item_envelope(item, graph.get_item_topics(item["id"]))
 
 
 @router.patch("/{item_id}")
-async def update_item(
+def update_item(
     item_id: str, body: ItemUpdate, graph: GraphService = Depends(get_graph)
 ) -> dict[str, Any]:
     updated = graph.update_item_state(item_id, read=body.read, starred=body.starred)
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    return envelope(item_detail_response(updated))
+    return _item_envelope(updated, graph.get_item_topics(updated["id"]))
 
 
 @router.post("/{item_id}/extract")
 async def extract_item(item_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
-    item = _item_or_404(graph, item_id)
+    item = await asyncio.to_thread(_item_or_404, graph, item_id)
     if not item.get("url"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -113,17 +149,18 @@ async def extract_item(item_id: str, graph: GraphService = Depends(get_graph)) -
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Could not extract article content",
         )
-    graph.save_reader_content(item_id, content, datetime.now(UTC))
-    refreshed = graph.get_item(item_id)
+    await asyncio.to_thread(graph.save_reader_content, item_id, content, datetime.now(UTC))
+    refreshed = await asyncio.to_thread(graph.get_item, item_id)
     assert refreshed is not None
-    return envelope(item_detail_response(refreshed))
+    topics = await asyncio.to_thread(graph.get_item_topics, refreshed["id"])
+    return _item_envelope(refreshed, topics)
 
 
 # --- Item tags ---
 
 
 @router.post("/{item_id}/tags", status_code=status.HTTP_201_CREATED)
-async def tag_item(
+def tag_item(
     item_id: str, body: TagApply, graph: GraphService = Depends(get_graph)
 ) -> dict[str, Any]:
     if not body.name.strip():
@@ -137,7 +174,7 @@ async def tag_item(
 
 
 @router.delete("/{item_id}/tags/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def untag_item(item_id: str, tag_id: str, graph: GraphService = Depends(get_graph)) -> None:
+def untag_item(item_id: str, tag_id: str, graph: GraphService = Depends(get_graph)) -> None:
     if not graph.untag_item(item_id, tag_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item or tag not found")
 
@@ -146,7 +183,7 @@ async def untag_item(item_id: str, tag_id: str, graph: GraphService = Depends(ge
 
 
 @router.get("/{item_id}/note")
-async def get_note(item_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+def get_note(item_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     note = graph.get_note(item_id)
     if note is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No note for this item")
@@ -154,7 +191,7 @@ async def get_note(item_id: str, graph: GraphService = Depends(get_graph)) -> di
 
 
 @router.put("/{item_id}/note")
-async def put_note(
+def put_note(
     item_id: str, body: NoteBody, graph: GraphService = Depends(get_graph)
 ) -> dict[str, Any]:
     note = graph.put_note(item_id, body.body)
@@ -164,6 +201,6 @@ async def put_note(
 
 
 @router.delete("/{item_id}/note", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_note(item_id: str, graph: GraphService = Depends(get_graph)) -> None:
+def delete_note(item_id: str, graph: GraphService = Depends(get_graph)) -> None:
     if not graph.delete_note(item_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No note for this item")

@@ -210,3 +210,71 @@ class TestGetItemTopics:
         assert "score" in t
         assert t["name"] == "machine learning"
         assert isinstance(t["score"], float)
+
+
+class TestEnrichedAt:
+    def test_schema_v6_has_enriched_at(self, graph):
+        # enriched_at should exist and default to None
+        item_id = graph.create_item(
+            feed_url="https://example.com/feed",
+            guid="test-ea-1",
+            url="https://example.com/1",
+            title="Test",
+            summary="",
+            content="",
+            author="",
+            word_count=0,
+            published_at=None,
+            fetched_at=datetime.now(UTC),
+        )
+        item = graph.get_item(item_id)
+        assert "enriched_at" in item
+        assert item["enriched_at"] is None
+
+    def test_enrich_item_sets_enriched_at(self, graph):
+        feed_url = "https://example.com/feed"
+        item_id = graph.create_item(
+            feed_url=feed_url, guid="test-ea-2",
+            url="https://example.com/2", title="NLP",
+            summary="machine learning", content="", author="",
+            word_count=2, published_at=None, fetched_at=datetime.now(UTC),
+        )
+        graph.enrich_item(item_id, [("machine learning", 0.1)])
+        item = graph.get_item(item_id)
+        assert item["enriched_at"] is not None
+
+    def test_enrich_item_empty_keywords_sets_enriched_at(self, graph):
+        feed_url = "https://example.com/feed"
+        item_id = graph.create_item(
+            feed_url=feed_url, guid="test-ea-3",
+            url="https://example.com/3", title=".",
+            summary="", content="", author="",
+            word_count=0, published_at=None, fetched_at=datetime.now(UTC),
+        )
+        graph.enrich_item(item_id, [])
+        item = graph.get_item(item_id)
+        assert item["enriched_at"] is not None
+
+    def test_get_unenriched_excludes_enriched_items(self, graph):
+        feed_url = "https://example.com/feed"
+        item_id = graph.create_item(
+            feed_url=feed_url, guid="test-ea-4",
+            url="https://example.com/4", title="AI",
+            summary="neural networks", content="", author="",
+            word_count=2, published_at=None, fetched_at=datetime.now(UTC),
+        )
+        assert any(r["id"] == item_id for r in graph.get_unenriched_items())
+        graph.enrich_item(item_id, [("neural networks", 0.1)])
+        assert not any(r["id"] == item_id for r in graph.get_unenriched_items())
+
+    def test_get_unenriched_includes_zero_keyword_before_enrich(self, graph):
+        feed_url = "https://example.com/feed"
+        item_id = graph.create_item(
+            feed_url=feed_url, guid="test-ea-5",
+            url="https://example.com/5", title=".",
+            summary="", content="", author="",
+            word_count=0, published_at=None, fetched_at=datetime.now(UTC),
+        )
+        assert any(r["id"] == item_id for r in graph.get_unenriched_items())
+        graph.enrich_item(item_id, [])
+        assert not any(r["id"] == item_id for r in graph.get_unenriched_items())

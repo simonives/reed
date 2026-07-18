@@ -17,7 +17,7 @@ import kuzu
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 _FEED_COLS = """
     f.id AS id, f.url AS url, f.title AS title, f.display_name AS display_name,
@@ -34,7 +34,7 @@ _ITEM_COLS = """
     i.summary AS summary, i.content AS content, i.author AS author,
     i.word_count AS word_count, i.published_at AS published_at,
     i.fetched_at AS fetched_at, i.read AS read, i.starred AS starred,
-    i.reader_content AS reader_content
+    i.reader_content AS reader_content, i.enriched_at AS enriched_at
 """
 
 _ITEM_LIST_COLS = """
@@ -170,6 +170,7 @@ class GraphService:
                 reader_content STRING,
                 reader_fetched_at TIMESTAMP,
                 note_body STRING,
+                enriched_at TIMESTAMP,
                 PRIMARY KEY (guid)
             )
         """)
@@ -244,6 +245,7 @@ class GraphService:
             (3, self._migrate_to_v3),
             (4, self._migrate_to_v4),
             (5, self._migrate_to_v5),
+            (6, self._migrate_to_v6),
         ]
         for target, run in migrations:
             if target > stored:
@@ -359,6 +361,9 @@ class GraphService:
         # Topic node table and ABOUT rel table are created by _init_schema (IF NOT EXISTS).
         # Items are enriched by FeedPoller._backfill_topics() on startup.
         pass
+
+    def _migrate_to_v6(self) -> None:
+        self._execute("ALTER TABLE Item ADD enriched_at TIMESTAMP DEFAULT NULL")
 
     def _exists(self, query: str, params: dict[str, Any]) -> bool:
         rows = _rows(self._execute(query, params))
@@ -681,11 +686,12 @@ class GraphService:
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
         prefix, params = self._item_filters(feed_id, tag, unread_only, starred_only, since, until)
-        count_rows = _rows(self._execute(f"{prefix} RETURN count(i) AS total", params))
+        count_rows = _rows(self._execute(f"{prefix} RETURN count(DISTINCT i) AS total", params))
         total = int(count_rows[0]["total"]) if count_rows else 0
         result = self._execute(
             f"""
             {prefix}
+            WITH i, collect(f)[1] AS f
             RETURN {_ITEM_LIST_COLS}, f.id AS feed_id,
                    coalesce(f.display_name, f.title) AS feed_title
             ORDER BY coalesce(i.published_at, i.fetched_at) DESC
@@ -698,6 +704,48 @@ class GraphService:
         for item in items:
             item["tags"] = tags_by_guid.get(item["guid"], [])
         return items, total
+
+    def list_items_cursor(
+        self,
+        feed_id: str | None = None,
+        tag: str | None = None,
+        unread_only: bool = False,
+        starred_only: bool = False,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 50,
+        cursor_ts: datetime | None = None,
+        cursor_guid: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Keyset-paginated item list. cursor_ts+cursor_guid encode the last-seen position."""
+        prefix, params = self._item_filters(feed_id, tag, unread_only, starred_only, since, until)
+        cursor_clause = ""
+        if cursor_ts is not None and cursor_guid is not None:
+            # Insert a WITH bridge so the cursor predicate is always a fresh WHERE,
+            # regardless of whether the prefix ends with WHERE or OPTIONAL MATCH.
+            cursor_clause = (
+                "\nWITH i, f"
+                "\nWHERE (coalesce(i.published_at, i.fetched_at) < $cursor_ts"
+                " OR (coalesce(i.published_at, i.fetched_at) = $cursor_ts AND i.guid > $cursor_guid))"
+            )
+            params["cursor_ts"] = cursor_ts
+            params["cursor_guid"] = cursor_guid
+        result = self._execute(
+            f"""
+            {prefix}{cursor_clause}
+            WITH i, collect(f)[1] AS f
+            RETURN {_ITEM_LIST_COLS}, f.id AS feed_id,
+                   coalesce(f.display_name, f.title) AS feed_title
+            ORDER BY coalesce(i.published_at, i.fetched_at) DESC, i.guid ASC
+            LIMIT $limit
+            """,
+            {**params, "limit": limit},
+        )
+        items = _rows(result)
+        tags_by_guid = self._tags_for_items([i["guid"] for i in items])
+        for item in items:
+            item["tags"] = tags_by_guid.get(item["guid"], [])
+        return items
 
     def search_items(
         self,
@@ -749,13 +797,14 @@ class GraphService:
 
         # count query must not include $offset/$limit — Kuzu rejects unused params
         count_params = {k: v for k, v in params.items() if k not in ("offset", "limit")}
-        count_rows = _rows(self._execute(f"{prefix} RETURN count(i) AS total", count_params))
+        count_rows = _rows(self._execute(f"{prefix} RETURN count(DISTINCT i) AS total", count_params))
         total = int(count_rows[0]["total"]) if count_rows else 0
 
         rows = _rows(
             self._execute(
                 f"""
                 {prefix}
+                WITH i, score, collect(f)[1] AS f
                 RETURN i.id AS id, i.guid AS guid, i.url AS url, i.title AS title,
                        i.summary AS summary, i.content AS content,
                        i.note_body AS note_body, i.author AS author,
@@ -1073,6 +1122,24 @@ class GraphService:
 
         config = {k: v for k, v in self.get_config_values().items() if k != "schema_version"}
 
+        topic_rows = _rows(
+            self._execute(
+                "MATCH (t:Topic) RETURN t.id AS id, t.name AS name ORDER BY name"
+            )
+        )
+        topics_export = [{"id": str(t["id"]), "name": str(t["name"])} for t in topic_rows]
+
+        about_rows = _rows(
+            self._execute(
+                "MATCH (i:Item)-[a:ABOUT]->(t:Topic) "
+                "RETURN i.guid AS item_guid, t.name AS topic_name, a.score AS score"
+            )
+        )
+        about_export = [
+            {"item_guid": r["item_guid"], "topic_name": r["topic_name"], "score": float(r["score"])}
+            for r in about_rows
+        ]
+
         return {
             "version": 1,
             "exported_at": datetime.now(UTC).isoformat(),
@@ -1080,6 +1147,8 @@ class GraphService:
             "items": items,
             "notes": notes,
             "tags": tags,
+            "topics": topics_export,
+            "about_edges": about_export,
             "config": config,
         }
 
@@ -1095,6 +1164,9 @@ class GraphService:
             raise
 
     def _restore_data_inner(self, backup: dict[str, Any]) -> dict[str, Any]:
+        # Delete Topic edges and nodes before clearing the rest (order matters for referential integrity)
+        self._execute("MATCH ()-[r:ABOUT]->() DELETE r")
+        self._execute("MATCH (t:Topic) DELETE t")
         # Delete edges before nodes (order is mandatory).
         for rel in ("TAGGED", "FEED_TAGGED", "HAS_NOTE", "HAS_ITEM"):
             self._execute(f"MATCH ()-[r:{rel}]->() DELETE r")
@@ -1227,9 +1299,40 @@ class GraphService:
                     {"id": item["id"], "name": tag_name},
                 )
 
+        # Topics (insert with item_count = 0; recomputed below from ABOUT edges).
+        for topic in backup.get("topics", []):
+            self._execute(
+                "MERGE (t:Topic {name: $name}) ON CREATE SET t.id = $id, t.item_count = 0",
+                {"name": topic["name"], "id": topic["id"]},
+            )
+
+        # ABOUT edges — insert after all Items and Topics exist.
+        for edge in backup.get("about_edges", []):
+            self._execute(
+                "MATCH (i:Item {guid: $item_guid}), (t:Topic {name: $topic_name}) "
+                "CREATE (i)-[:ABOUT {score: $score}]->(t)",
+                {"item_guid": edge["item_guid"], "topic_name": edge["topic_name"],
+                 "score": float(edge["score"])},
+            )
+
+        # Recompute item_count for each Topic from actual ABOUT edge counts.
+        topic_counts = _rows(
+            self._execute(
+                "MATCH (i:Item)-[:ABOUT]->(t:Topic) "
+                "RETURN t.name AS name, count(i) AS cnt"
+            )
+        )
+        for row in topic_counts:
+            self._execute(
+                "MATCH (t:Topic {name: $name}) SET t.item_count = $cnt",
+                {"name": row["name"], "cnt": int(row["cnt"])},
+            )
+
+        feed_count = int(_rows(self._execute("MATCH (f:Feed) RETURN count(f) AS n"))[0]["n"])
+        item_count = int(_rows(self._execute("MATCH (i:Item) RETURN count(i) AS n"))[0]["n"])
         return {
-            "feeds": len(backup.get("feeds", [])),
-            "items": len(backup.get("items", [])),
+            "feeds": feed_count,
+            "items": item_count,
             "notes": len(backup.get("notes", [])),
             "tags": len(backup.get("tags", [])),
         }
@@ -1269,17 +1372,19 @@ class GraphService:
             )
 
     def enrich_item(self, item_id: str, keywords: list[tuple[str, float]]) -> None:
-        """Upsert topics and link them to an item. No-op if keywords is empty."""
-        if not keywords:
-            return
+        """Link keywords to item as topics, then mark item as enriched."""
         for name, score in keywords:
             self.link_item_topic(item_id, name, score)
+        self._execute(
+            "MATCH (i:Item {id: $id}) SET i.enriched_at = $ts",
+            {"id": item_id, "ts": datetime.now(UTC)},
+        )
 
     def get_unenriched_items(self) -> list[dict[str, Any]]:
-        """Return all items with no outgoing ABOUT edges."""
+        """Return all items not yet enriched (enriched_at IS NULL)."""
         return _rows(
             self._execute(
-                "MATCH (i:Item) WHERE NOT (i)-[:ABOUT]->(:Topic) "
+                "MATCH (i:Item) WHERE i.enriched_at IS NULL "
                 "RETURN i.id AS id, i.title AS title, "
                 "i.summary AS summary, i.content AS content"
             )

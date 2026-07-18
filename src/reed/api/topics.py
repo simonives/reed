@@ -19,7 +19,7 @@ router = APIRouter(
 
 
 @router.get("")
-async def list_topics(
+def list_topics(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     graph: GraphService = Depends(get_graph),
@@ -29,7 +29,7 @@ async def list_topics(
 
 
 @router.get("/{topic_id}")
-async def get_topic(
+def get_topic(
     topic_id: str, graph: GraphService = Depends(get_graph)
 ) -> dict[str, Any]:
     topic = graph.get_topic(topic_id)
