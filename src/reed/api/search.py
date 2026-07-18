@@ -44,7 +44,7 @@ def _search_item_response(item: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("")
-async def search(
+def search(
     q: str | None = None,
     feed_id: str | None = None,
     tag: str | None = None,

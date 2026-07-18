@@ -175,6 +175,23 @@ class TestConfig:
         r = authed.patch("/api/v1/config", json={"font_family_reading": "Comic Sans"})
         assert r.status_code == 400
 
+    def test_explicit_null_alone_returns_422(self, authed):
+        """#126 — PATCH with only null values must not store None or crash."""
+        r = authed.patch("/api/v1/config", json={"items_per_page": None})
+        assert r.status_code == 422
+
+    def test_explicit_null_does_not_overwrite_stored_value(self, authed):
+        """#126 — a null alongside a valid value: null is dropped, valid value applied."""
+        authed.patch("/api/v1/config", json={"items_per_page": 25})
+        r = authed.patch(
+            "/api/v1/config",
+            json={"items_per_page": None, "default_theme": "dark"},
+        )
+        assert r.status_code == 200
+        config = authed.get("/api/v1/config").json()["data"]
+        assert config["items_per_page"] == 25  # null did not overwrite
+        assert config["default_theme"] == "dark"
+
 
 class TestNoteEdge:
     def test_put_get_update_delete_note_via_edge(self, tmp_path):

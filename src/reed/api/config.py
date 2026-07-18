@@ -41,15 +41,15 @@ class ConfigUpdate(BaseModel):
 
 
 @router.get("")
-async def get_config(graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+def get_config(graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     return envelope(effective_config(graph))
 
 
 @router.patch("")
-async def update_config(
+def update_config(
     body: ConfigUpdate, graph: GraphService = Depends(get_graph)
 ) -> dict[str, Any]:
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(exclude_unset=True, exclude_none=True)
     if not updates:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No config values provided"

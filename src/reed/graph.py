@@ -127,7 +127,7 @@ class GraphService:
         pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = kuzu.Database(db_path)
         self._conn = kuzu.Connection(self._db)
-        self._conn_lock = threading.Lock()
+        self._conn_lock = threading.RLock()
         self._ensure_schema()
 
     def _execute(self, query: str, params: dict | None = None):
@@ -1079,7 +1079,8 @@ class GraphService:
 
         item_rows = _rows(
             self._execute("""
-                MATCH (f:Feed)-[:HAS_ITEM]->(i:Item)
+                MATCH (i:Item)
+                OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(i)
                 RETURN i.id AS id, i.guid AS guid, i.url AS url, i.title AS title,
                        i.author AS author, i.word_count AS word_count,
                        i.published_at AS published_at, i.fetched_at AS fetched_at,
@@ -1171,14 +1172,15 @@ class GraphService:
 
     def restore_data(self, backup: dict[str, Any]) -> dict[str, Any]:
         """Clear all data and re-insert from backup. Schema is never touched."""
-        self._execute("BEGIN TRANSACTION")
-        try:
-            result = self._restore_data_inner(backup)
-            self._execute("COMMIT")
-            return result
-        except Exception:
-            self._execute("ROLLBACK")
-            raise
+        with self._conn_lock:
+            self._execute("BEGIN TRANSACTION")
+            try:
+                result = self._restore_data_inner(backup)
+                self._execute("COMMIT")
+                return result
+            except Exception:
+                self._execute("ROLLBACK")
+                raise
 
     def _restore_data_inner(self, backup: dict[str, Any]) -> dict[str, Any]:
         # Delete Topic edges and nodes before clearing the rest (order matters for referential integrity)
@@ -1269,10 +1271,11 @@ class GraphService:
                     "starred": item.get("starred", False),
                 },
             )
-            self._execute(
-                "MATCH (f:Feed {url: $feed_url}), (i:Item {id: $id}) CREATE (f)-[:HAS_ITEM]->(i)",
-                {"feed_url": item["feed_url"], "id": item["id"]},
-            )
+            if item.get("feed_url"):
+                self._execute(
+                    "MATCH (f:Feed {url: $feed_url}), (i:Item {id: $id}) CREATE (f)-[:HAS_ITEM]->(i)",
+                    {"feed_url": item["feed_url"], "id": item["id"]},
+                )
 
         # Notes with HAS_NOTE edges; also sync note_body for FTS.
         for note in backup.get("notes", []):

@@ -288,3 +288,77 @@ class TestExportRestoreTopics:
         assert "feeds" in result and "items" in result
         actual_feeds = g.list_feeds()
         assert result["feeds"] == len(actual_feeds)
+
+
+class TestExportOrphanedItems:
+    """#125 — export_data must include starred/tagged items whose feed was deleted."""
+
+    def _make_gs(self, tmp_path):
+        return GraphService(str(tmp_path / "test.kuzu"))
+
+    def _seed_item(self, gs, starred=False, tag=None):
+        feed = gs.create_feed(
+            url="https://example.com/feed",
+            title="Feed",
+            description="",
+            site_url="https://example.com",
+        )
+        item_id = gs.create_item(
+            feed_url="https://example.com/feed",
+            guid="g1",
+            url="https://example.com/1",
+            title="Article",
+            summary="",
+            content="",
+            author="",
+            word_count=0,
+            published_at=None,
+            fetched_at=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+        if starred:
+            gs.update_item_state(item_id, starred=True)
+        if tag:
+            gs.tag_item(item_id, tag)
+        gs.delete_feed(feed["id"])
+        return item_id
+
+    def test_starred_item_included_after_feed_deleted(self, tmp_path):
+        gs = self._make_gs(tmp_path)
+        try:
+            self._seed_item(gs, starred=True)
+            backup = gs.export_data()
+            assert any(i["guid"] == "g1" for i in backup["items"])
+        finally:
+            gs.close()
+
+    def test_tagged_item_included_after_feed_deleted(self, tmp_path):
+        gs = self._make_gs(tmp_path)
+        try:
+            gs.ensure_tag("tech")
+            self._seed_item(gs, tag="tech")
+            backup = gs.export_data()
+            assert any(i["guid"] == "g1" for i in backup["items"])
+        finally:
+            gs.close()
+
+    def test_orphaned_item_feed_url_is_none_or_empty(self, tmp_path):
+        gs = self._make_gs(tmp_path)
+        try:
+            self._seed_item(gs, starred=True)
+            backup = gs.export_data()
+            item = next(i for i in backup["items"] if i["guid"] == "g1")
+            # feed_url may be None or absent for orphans — must not crash restore
+            assert "feed_url" in item
+        finally:
+            gs.close()
+
+    def test_orphaned_item_survives_restore_roundtrip(self, tmp_path):
+        gs = self._make_gs(tmp_path)
+        try:
+            self._seed_item(gs, starred=True)
+            backup = gs.export_data()
+            gs.restore_data(backup)
+            items = gs.list_items_cursor(starred_only=True)
+            assert any(i["guid"] == "g1" for i in items)
+        finally:
+            gs.close()

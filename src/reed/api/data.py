@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -26,7 +27,7 @@ router = APIRouter(
 
 
 @router.get("/export")
-async def export_data(graph: GraphService = Depends(get_graph)) -> Response:
+def export_data(graph: GraphService = Depends(get_graph)) -> Response:
     backup = graph.export_data()
     content = json.dumps(backup, ensure_ascii=False).encode("utf-8")
     filename = f"reed-backup-{datetime.now(UTC).date().isoformat()}.json"
@@ -61,5 +62,5 @@ async def restore_data(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Backup missing required keys: {sorted(missing)}",
         )
-    summary = graph.restore_data(backup)
+    summary = await asyncio.to_thread(graph.restore_data, backup)
     return envelope(summary)

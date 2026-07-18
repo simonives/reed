@@ -24,12 +24,12 @@ class TagCreate(BaseModel):
 
 
 @router.get("")
-async def list_tags(graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+def list_tags(graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     return envelope(graph.list_tags())
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_tag(body: TagCreate, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+def create_tag(body: TagCreate, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     name = body.name.strip()
     if not name:
         raise HTTPException(
@@ -39,6 +39,6 @@ async def create_tag(body: TagCreate, graph: GraphService = Depends(get_graph)) 
 
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_tag(tag_id: str, graph: GraphService = Depends(get_graph)) -> None:
+def delete_tag(tag_id: str, graph: GraphService = Depends(get_graph)) -> None:
     if not graph.delete_tag(tag_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Any
 
@@ -46,25 +47,27 @@ async def preview_opml(
             detail=f"OPML file exceeds {MAX_OPML_BYTES // (1024 * 1024)} MB limit.",
         )
     try:
-        result = parse_opml(data)
+        result = await asyncio.to_thread(parse_opml, data)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
-    candidates = [
-        {
-            "url": c.url,
-            "title": c.title,
-            "tags": c.tags,
-            "already_subscribed": graph.feed_exists(c.url),
-        }
-        for c in result.candidates
-    ]
+    candidates = await asyncio.to_thread(
+        lambda: [
+            {
+                "url": c.url,
+                "title": c.title,
+                "tags": c.tags,
+                "already_subscribed": graph.feed_exists(c.url),
+            }
+            for c in result.candidates
+        ]
+    )
     return envelope({"candidates": candidates, "unparseable": result.unparseable})
 
 
 @router.post("/import")
-async def import_opml(
+def import_opml(
     body: ImportBody,
     graph: GraphService = Depends(get_graph),
 ) -> dict[str, Any]:
@@ -90,7 +93,7 @@ async def import_opml(
 
 
 @router.get("/export")
-async def export_opml(graph: GraphService = Depends(get_graph)) -> Response:
+def export_opml(graph: GraphService = Depends(get_graph)) -> Response:
     feeds = graph.list_feeds()
     content = build_opml(feeds)
     filename = f"reed-feeds-{date.today().isoformat()}.opml"
