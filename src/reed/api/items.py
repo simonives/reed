@@ -84,7 +84,9 @@ async def mark_read(
 @router.get("/{item_id}")
 async def get_item(item_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     item = _item_or_404(graph, item_id)
-    return envelope(item_detail_response(item))
+    response = item_detail_response(item)
+    response["topics"] = graph.get_item_topics(item["id"])
+    return envelope(response)
 
 
 @router.patch("/{item_id}")

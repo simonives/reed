@@ -303,7 +303,7 @@ class TestPollerReaderExtraction:
                 "reed.poller.extract_article", AsyncMock(return_value="extracted")
             ) as mock_extract:
                 await poller._extract_new_items(
-                    [(item_id, "https://example.com/article")], http=AsyncMock()
+                    [(item_id, "https://example.com/article", "")], http=AsyncMock()
                 )
 
             mock_extract.assert_awaited_once()

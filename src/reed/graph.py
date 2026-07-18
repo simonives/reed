@@ -6,7 +6,9 @@ from __future__ import annotations
 import html as _html
 import json
 import logging
+import pathlib
 import re
+import threading
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -15,7 +17,7 @@ import kuzu
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 _FEED_COLS = """
     f.id AS id, f.url AS url, f.title AS title, f.display_name AS display_name,
@@ -105,17 +107,23 @@ class GraphService:
     """
 
     def __init__(self, db_path: str) -> None:
-        import pathlib
         pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = kuzu.Database(db_path)
         self._conn = kuzu.Connection(self._db)
+        self._conn_lock = threading.Lock()
         self._ensure_schema()
+
+    def _execute(self, query: str, params: dict | None = None):
+        with self._conn_lock:
+            if params is not None:
+                return self._conn.execute(query, params)
+            return self._conn.execute(query)
 
     def _ensure_schema(self) -> None:
         tables = self._table_names()
         fresh = "Feed" not in tables
         if "Note" in tables and "item_id" in self._column_names("Note"):
-            self._conn.execute("ALTER TABLE Note RENAME TO _NoteLegacy")
+            self._execute("ALTER TABLE Note RENAME TO _NoteLegacy")
         self._init_schema()
         if fresh:
             self.set_config_value("schema_version", _SCHEMA_VERSION)
@@ -125,7 +133,7 @@ class GraphService:
         logger.debug("Schema ready")
 
     def _init_schema(self) -> None:
-        self._conn.execute("""
+        self._execute("""
             CREATE NODE TABLE IF NOT EXISTS Feed(
                 url STRING,
                 id STRING,
@@ -145,7 +153,7 @@ class GraphService:
                 PRIMARY KEY (url)
             )
         """)
-        self._conn.execute("""
+        self._execute("""
             CREATE NODE TABLE IF NOT EXISTS Item(
                 guid STRING,
                 id STRING,
@@ -165,14 +173,14 @@ class GraphService:
                 PRIMARY KEY (guid)
             )
         """)
-        self._conn.execute("""
+        self._execute("""
             CREATE NODE TABLE IF NOT EXISTS Tag(
                 name STRING,
                 id STRING,
                 PRIMARY KEY (name)
             )
         """)
-        self._conn.execute("""
+        self._execute("""
             CREATE NODE TABLE IF NOT EXISTS Note(
                 id STRING,
                 body STRING,
@@ -181,17 +189,28 @@ class GraphService:
                 PRIMARY KEY (id)
             )
         """)
-        self._conn.execute("""
+        self._execute("""
             CREATE NODE TABLE IF NOT EXISTS Config(
                 key STRING,
                 value STRING,
                 PRIMARY KEY (key)
             )
         """)
-        self._conn.execute("CREATE REL TABLE IF NOT EXISTS HAS_ITEM(FROM Feed TO Item)")
-        self._conn.execute("CREATE REL TABLE IF NOT EXISTS TAGGED(FROM Item TO Tag)")
-        self._conn.execute("CREATE REL TABLE IF NOT EXISTS FEED_TAGGED(FROM Feed TO Tag)")
-        self._conn.execute("CREATE REL TABLE IF NOT EXISTS HAS_NOTE(FROM Item TO Note)")
+        self._execute("CREATE REL TABLE IF NOT EXISTS HAS_ITEM(FROM Feed TO Item)")
+        self._execute("CREATE REL TABLE IF NOT EXISTS TAGGED(FROM Item TO Tag)")
+        self._execute("CREATE REL TABLE IF NOT EXISTS FEED_TAGGED(FROM Feed TO Tag)")
+        self._execute("CREATE REL TABLE IF NOT EXISTS HAS_NOTE(FROM Item TO Note)")
+        self._execute("""
+            CREATE NODE TABLE IF NOT EXISTS Topic(
+                id STRING,
+                name STRING,
+                item_count INT64,
+                PRIMARY KEY (name)
+            )
+        """)
+        self._execute(
+            "CREATE REL TABLE IF NOT EXISTS ABOUT(FROM Item TO Topic, score DOUBLE)"
+        )
         # FTS index — CREATE_FTS_INDEX has no IF NOT EXISTS so we suppress errors.
         # On existing v3 DBs the column doesn't exist yet; _migrate_to_v4 creates it.
         _fts_cypher = (
@@ -199,12 +218,12 @@ class GraphService:
             " ['title', 'summary', 'content', 'note_body'])"
         )
         try:
-            self._conn.execute(_fts_cypher)
-        except Exception as e:
+            self._execute(_fts_cypher)
+        except RuntimeError as e:
             logger.warning("FTS index creation skipped in _init_schema: %s", e)
 
     def _table_names(self) -> set[str]:
-        rows = _rows(self._conn.execute("CALL show_tables() RETURN name"))
+        rows = _rows(self._execute("CALL show_tables() RETURN name"))
         return {row["name"] for row in rows}
 
     def _column_names(self, table: str) -> set[str]:
@@ -213,14 +232,19 @@ class GraphService:
         # non-constant caller would inject. Fail loudly instead (#56).
         if table not in self._table_names():
             raise ValueError(f"Unknown table: {table!r}")
-        rows = _rows(self._conn.execute(f"CALL table_info('{table}') RETURN name"))
+        rows = _rows(self._execute(f"CALL table_info('{table}') RETURN name"))
         return {row["name"] for row in rows}
 
     def _migrate(self) -> None:
         stored = self.get_config_values().get("schema_version", 1)
         if stored >= _SCHEMA_VERSION:
             return
-        migrations = [(2, self._migrate_to_v2), (3, self._migrate_to_v3), (4, self._migrate_to_v4)]
+        migrations = [
+            (2, self._migrate_to_v2),
+            (3, self._migrate_to_v3),
+            (4, self._migrate_to_v4),
+            (5, self._migrate_to_v5),
+        ]
         for target, run in migrations:
             if target > stored:
                 run()
@@ -246,24 +270,24 @@ class GraphService:
         ]
         for table, column, decl, existing in additions:
             if column not in existing:
-                self._conn.execute(f"ALTER TABLE {table} ADD {column} {decl}")
+                self._execute(f"ALTER TABLE {table} ADD {column} {decl}")
         self._backfill_v2()
 
     def _backfill_v2(self) -> None:
         for table, key in (("Feed", "url"), ("Item", "guid")):
             rows = _rows(
-                self._conn.execute(f"MATCH (n:{table}) WHERE n.id IS NULL RETURN n.{key} AS key")
+                self._execute(f"MATCH (n:{table}) WHERE n.id IS NULL RETURN n.{key} AS key")
             )
             for row in rows:
-                self._conn.execute(
+                self._execute(
                     f"MATCH (n:{table}) WHERE n.{key} = $key SET n.id = $id",
                     {"key": row["key"], "id": str(uuid.uuid4())},
                 )
-        self._conn.execute("MATCH (f:Feed) WHERE f.is_active IS NULL SET f.is_active = true")
-        self._conn.execute(
+        self._execute("MATCH (f:Feed) WHERE f.is_active IS NULL SET f.is_active = true")
+        self._execute(
             "MATCH (f:Feed) WHERE f.consecutive_errors IS NULL SET f.consecutive_errors = 0"
         )
-        self._conn.execute(
+        self._execute(
             "MATCH (f:Feed) WHERE f.subscribed_at IS NULL SET f.subscribed_at = $now",
             {"now": datetime.now(UTC)},
         )
@@ -273,7 +297,7 @@ class GraphService:
         if "_NoteLegacy" not in self._table_names():
             return
         legacy = _rows(
-            self._conn.execute(
+            self._execute(
                 "MATCH (o:_NoteLegacy) RETURN o.item_id AS item_id, o.body AS body, "
                 "o.created_at AS created_at, o.updated_at AS updated_at"
             )
@@ -281,13 +305,13 @@ class GraphService:
         migrated = 0
         for row in legacy:
             item_rows = _rows(
-                self._conn.execute(
+                self._execute(
                     "MATCH (i:Item) WHERE i.id = $item_id RETURN count(i) AS c",
                     {"item_id": row["item_id"]},
                 )
             )
             if item_rows and item_rows[0].get("c", 0) > 0:
-                self._conn.execute(
+                self._execute(
                     """
                     MATCH (i:Item) WHERE i.id = $item_id
                     CREATE (i)-[:HAS_NOTE]->(:Note {
@@ -310,39 +334,44 @@ class GraphService:
                 "Dropped %d orphaned legacy note(s) with no matching item during v3 migration",
                 discarded,
             )
-        self._conn.execute("DROP TABLE _NoteLegacy")
+        self._execute("DROP TABLE _NoteLegacy")
 
     def _migrate_to_v4(self) -> None:
         if "note_body" not in self._column_names("Item"):
-            self._conn.execute("ALTER TABLE Item ADD note_body STRING")
+            self._execute("ALTER TABLE Item ADD note_body STRING")
         # CREATE_FTS_INDEX has no IF NOT EXISTS; suppress errors.
         # May fail on stripped legacy DBs missing v1 columns — _init_schema
         # will retry on the next open once all columns are present.
         try:
-            self._conn.execute(
+            self._execute(
                 "CALL CREATE_FTS_INDEX('Item', 'item_fts',"
                 " ['title', 'summary', 'content', 'note_body'])"
             )
-        except Exception as e:
+        except RuntimeError as e:
             logger.warning("FTS index creation skipped in _migrate_to_v4: %s", e)
         # Backfill note_body from existing HAS_NOTE edges.
-        self._conn.execute("""
+        self._execute("""
             MATCH (i:Item)-[:HAS_NOTE]->(n:Note)
             SET i.note_body = n.body
         """)
 
+    def _migrate_to_v5(self) -> None:
+        # Topic node table and ABOUT rel table are created by _init_schema (IF NOT EXISTS).
+        # Items are enriched by FeedPoller._backfill_topics() on startup.
+        pass
+
     def _exists(self, query: str, params: dict[str, Any]) -> bool:
-        rows = _rows(self._conn.execute(query, params))
+        rows = _rows(self._execute(query, params))
         return bool(rows and rows[0].get("cnt", 0) > 0)
 
     # --- Config ---
 
     def get_config_values(self) -> dict[str, Any]:
-        rows = _rows(self._conn.execute("MATCH (c:Config) RETURN c.key AS key, c.value AS value"))
+        rows = _rows(self._execute("MATCH (c:Config) RETURN c.key AS key, c.value AS value"))
         return {row["key"]: json.loads(row["value"]) for row in rows}
 
     def set_config_value(self, key: str, value: Any) -> None:
-        self._conn.execute(
+        self._execute(
             "MERGE (c:Config {key: $key}) ON CREATE SET c.value = $value "
             "ON MATCH SET c.value = $value",
             {"key": key, "value": json.dumps(value)},
@@ -369,7 +398,7 @@ class GraphService:
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
         feed_id = str(uuid.uuid4())
-        self._conn.execute(
+        self._execute(
             """
             CREATE (:Feed {
                 url: $url,
@@ -402,7 +431,7 @@ class GraphService:
         return feed
 
     def _feed_query(self, where: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        result = self._conn.execute(
+        result = self._execute(
             f"""
             MATCH (f:Feed)
             {where}
@@ -416,7 +445,7 @@ class GraphService:
         )
         feeds = _rows(result)
         tag_rows = _rows(
-            self._conn.execute(
+            self._execute(
                 f"""
                 MATCH (f:Feed)
                 {where}
@@ -453,7 +482,7 @@ class GraphService:
         updates = {k: v for k, v in fields.items() if k in allowed}
         if updates:
             set_clause = ", ".join(f"f.{k} = ${k}" for k in updates)
-            self._conn.execute(
+            self._execute(
                 f"MATCH (f:Feed) WHERE f.id = $id SET {set_clause}",
                 {"id": feed_id, **updates},
             )
@@ -462,13 +491,13 @@ class GraphService:
         return self.get_feed(feed_id)
 
     def set_feed_tags(self, feed_id: str, tags: list[str]) -> None:
-        self._conn.execute(
+        self._execute(
             "MATCH (f:Feed)-[r:FEED_TAGGED]->(:Tag) WHERE f.id = $id DELETE r",
             {"id": feed_id},
         )
         for name in tags:
             tag = self.ensure_tag(name)
-            self._conn.execute(
+            self._execute(
                 """
                 MATCH (f:Feed), (t:Tag {name: $name})
                 WHERE f.id = $id
@@ -478,7 +507,7 @@ class GraphService:
             )
 
     def list_feeds_for_polling(self) -> list[dict[str, Any]]:
-        result = self._conn.execute(
+        result = self._execute(
             f"""
             MATCH (f:Feed)
             WHERE f.is_active = true
@@ -495,7 +524,7 @@ class GraphService:
         last_modified: str | None,
         error: str | None,
     ) -> None:
-        self._conn.execute(
+        self._execute(
             """
             MATCH (f:Feed {url: $url})
             SET f.last_fetched_at = $last_fetched_at,
@@ -518,7 +547,7 @@ class GraphService:
         if not self.feed_exists_by_id(feed_id):
             return False
         # Items are kept (read/starred state preserved); only the feed and its edges go
-        self._conn.execute("MATCH (f:Feed) WHERE f.id = $id DETACH DELETE f", {"id": feed_id})
+        self._execute("MATCH (f:Feed) WHERE f.id = $id DETACH DELETE f", {"id": feed_id})
         return True
 
     # --- Items ---
@@ -551,7 +580,7 @@ class GraphService:
                 clean = _strip_html(content)
                 summary = clean[:300].rsplit(" ", 1)[0] + "…" if len(clean) > 300 else clean
             item_id = str(uuid.uuid4())
-            self._conn.execute(
+            self._execute(
                 """
                 CREATE (:Item {
                     guid: $guid,
@@ -581,7 +610,7 @@ class GraphService:
                     "fetched_at": fetched_at,
                 },
             )
-        self._conn.execute(
+        self._execute(
             """
             MATCH (f:Feed {url: $feed_url}), (i:Item {guid: $guid})
             MERGE (f)-[:HAS_ITEM]->(i)
@@ -652,9 +681,9 @@ class GraphService:
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
         prefix, params = self._item_filters(feed_id, tag, unread_only, starred_only, since, until)
-        count_rows = _rows(self._conn.execute(f"{prefix} RETURN count(i) AS total", params))
+        count_rows = _rows(self._execute(f"{prefix} RETURN count(i) AS total", params))
         total = int(count_rows[0]["total"]) if count_rows else 0
-        result = self._conn.execute(
+        result = self._execute(
             f"""
             {prefix}
             RETURN {_ITEM_LIST_COLS}, f.id AS feed_id,
@@ -720,11 +749,11 @@ class GraphService:
 
         # count query must not include $offset/$limit — Kuzu rejects unused params
         count_params = {k: v for k, v in params.items() if k not in ("offset", "limit")}
-        count_rows = _rows(self._conn.execute(f"{prefix} RETURN count(i) AS total", count_params))
+        count_rows = _rows(self._execute(f"{prefix} RETURN count(i) AS total", count_params))
         total = int(count_rows[0]["total"]) if count_rows else 0
 
         rows = _rows(
-            self._conn.execute(
+            self._execute(
                 f"""
                 {prefix}
                 RETURN i.id AS id, i.guid AS guid, i.url AS url, i.title AS title,
@@ -737,7 +766,7 @@ class GraphService:
                 ORDER BY score DESC
                 SKIP $offset LIMIT $limit
                 """,
-                {**params},
+                params,
             )
         )
 
@@ -758,7 +787,7 @@ class GraphService:
         if not guids:
             return {}
         rows = _rows(
-            self._conn.execute(
+            self._execute(
                 """
                 UNWIND $guids AS g
                 MATCH (i:Item {guid: g})-[:TAGGED]->(t:Tag)
@@ -774,7 +803,7 @@ class GraphService:
         return tags
 
     def get_item(self, item_id: str) -> dict[str, Any] | None:
-        result = self._conn.execute(
+        result = self._execute(
             f"""
             MATCH (i:Item)
             WHERE i.id = $id
@@ -803,7 +832,7 @@ class GraphService:
             updates["starred"] = starred
         if updates:
             set_clause = ", ".join(f"i.{k} = ${k}" for k in updates)
-            self._conn.execute(
+            self._execute(
                 f"MATCH (i:Item) WHERE i.id = $id SET {set_clause}",
                 {"id": item_id, **updates},
             )
@@ -821,13 +850,13 @@ class GraphService:
             clauses.append("coalesce(i.published_at, i.fetched_at) < $before")
             params["before"] = before
         where = "WHERE " + " AND ".join(clauses)
-        count_rows = _rows(self._conn.execute(f"{match} {where} RETURN count(i) AS total", params))
+        count_rows = _rows(self._execute(f"{match} {where} RETURN count(i) AS total", params))
         total = int(count_rows[0]["total"]) if count_rows else 0
-        self._conn.execute(f"{match} {where} SET i.read = true", params)
+        self._execute(f"{match} {where} SET i.read = true", params)
         return total
 
     def save_reader_content(self, item_id: str, content: str, fetched_at: datetime) -> None:
-        self._conn.execute(
+        self._execute(
             """
             MATCH (i:Item) WHERE i.id = $id
             SET i.reader_content = $content, i.reader_fetched_at = $fetched_at
@@ -837,7 +866,7 @@ class GraphService:
 
     def _item_guid(self, item_id: str) -> str | None:
         rows = _rows(
-            self._conn.execute(
+            self._execute(
                 "MATCH (i:Item) WHERE i.id = $id RETURN i.guid AS guid", {"id": item_id}
             )
         )
@@ -847,7 +876,7 @@ class GraphService:
 
     def ensure_tag(self, name: str) -> dict[str, Any]:
         rows = _rows(
-            self._conn.execute(
+            self._execute(
                 """
                 MERGE (t:Tag {name: $name})
                 ON CREATE SET t.id = $id
@@ -860,7 +889,7 @@ class GraphService:
 
     def get_tag(self, tag_id: str) -> dict[str, Any] | None:
         rows = _rows(
-            self._conn.execute(
+            self._execute(
                 "MATCH (t:Tag) WHERE t.id = $id RETURN t.id AS id, t.name AS name",
                 {"id": tag_id},
             )
@@ -868,7 +897,7 @@ class GraphService:
         return rows[0] if rows else None
 
     def list_tags(self) -> list[dict[str, Any]]:
-        result = self._conn.execute(
+        result = self._execute(
             """
             MATCH (t:Tag)
             OPTIONAL MATCH (i:Item)-[:TAGGED]->(t)
@@ -881,7 +910,7 @@ class GraphService:
     def delete_tag(self, tag_id: str) -> bool:
         if self.get_tag(tag_id) is None:
             return False
-        self._conn.execute("MATCH (t:Tag) WHERE t.id = $id DETACH DELETE t", {"id": tag_id})
+        self._execute("MATCH (t:Tag) WHERE t.id = $id DETACH DELETE t", {"id": tag_id})
         return True
 
     def tag_item(self, item_id: str, name: str) -> dict[str, Any] | None:
@@ -889,7 +918,7 @@ class GraphService:
         if guid is None:
             return None
         tag = self.ensure_tag(name)
-        self._conn.execute(
+        self._execute(
             """
             MATCH (i:Item {guid: $guid}), (t:Tag {name: $name})
             MERGE (i)-[:TAGGED]->(t)
@@ -903,14 +932,14 @@ class GraphService:
         params = {"item_id": item_id, "tag_id": tag_id}
         if not self._exists(f"{pattern} RETURN count(r) AS cnt", params):
             return False
-        self._conn.execute(f"{pattern} DELETE r", params)
+        self._execute(f"{pattern} DELETE r", params)
         return True
 
     # --- Notes ---
 
     def get_note(self, item_id: str) -> dict[str, Any] | None:
         rows = _rows(
-            self._conn.execute(
+            self._execute(
                 """
                 MATCH (i:Item)-[:HAS_NOTE]->(n:Note) WHERE i.id = $item_id
                 RETURN n.body AS body, n.created_at AS created_at, n.updated_at AS updated_at
@@ -925,7 +954,7 @@ class GraphService:
             return None
         now = datetime.now(UTC)
         if self.get_note(item_id) is not None:
-            self._conn.execute(
+            self._execute(
                 """
                 MATCH (i:Item)-[:HAS_NOTE]->(n:Note) WHERE i.id = $item_id
                 SET n.body = $body, n.updated_at = $now
@@ -933,7 +962,7 @@ class GraphService:
                 {"item_id": item_id, "body": body, "now": now},
             )
         else:
-            self._conn.execute(
+            self._execute(
                 """
                 MATCH (i:Item) WHERE i.id = $item_id
                 CREATE (i)-[:HAS_NOTE]->(:Note {
@@ -942,7 +971,7 @@ class GraphService:
                 """,
                 {"item_id": item_id, "id": str(uuid.uuid4()), "body": body, "now": now},
             )
-        self._conn.execute(
+        self._execute(
             "MATCH (i:Item) WHERE i.id = $id SET i.note_body = $body",
             {"id": item_id, "body": body},
         )
@@ -951,11 +980,11 @@ class GraphService:
     def delete_note(self, item_id: str) -> bool:
         if self.get_note(item_id) is None:
             return False
-        self._conn.execute(
+        self._execute(
             "MATCH (i:Item)-[:HAS_NOTE]->(n:Note) WHERE i.id = $item_id DETACH DELETE n",
             {"item_id": item_id},
         )
-        self._conn.execute(
+        self._execute(
             "MATCH (i:Item) WHERE i.id = $id SET i.note_body = NULL",
             {"id": item_id},
         )
@@ -983,7 +1012,7 @@ class GraphService:
         ]
 
         item_rows = _rows(
-            self._conn.execute("""
+            self._execute("""
                 MATCH (f:Feed)-[:HAS_ITEM]->(i:Item)
                 RETURN i.id AS id, i.guid AS guid, i.url AS url, i.title AS title,
                        i.author AS author, i.word_count AS word_count,
@@ -993,7 +1022,7 @@ class GraphService:
             """)
         )
         item_tag_rows = _rows(
-            self._conn.execute(
+            self._execute(
                 "MATCH (i:Item)-[:TAGGED]->(t:Tag) RETURN i.id AS item_id, t.name AS tag_name"
             )
         )
@@ -1019,7 +1048,7 @@ class GraphService:
         ]
 
         note_rows = _rows(
-            self._conn.execute("""
+            self._execute("""
                 MATCH (i:Item)-[:HAS_NOTE]->(n:Note)
                 RETURN i.id AS item_id, n.body AS body,
                        n.created_at AS created_at, n.updated_at AS updated_at
@@ -1036,7 +1065,7 @@ class GraphService:
         ]
 
         tag_nodes = _rows(
-            self._conn.execute(
+            self._execute(
                 "MATCH (t:Tag) RETURN t.id AS id, t.name AS name ORDER BY name"
             )
         )
@@ -1056,21 +1085,21 @@ class GraphService:
 
     def restore_data(self, backup: dict[str, Any]) -> dict[str, Any]:
         """Clear all data and re-insert from backup. Schema is never touched."""
-        self._conn.execute("BEGIN TRANSACTION")
+        self._execute("BEGIN TRANSACTION")
         try:
             result = self._restore_data_inner(backup)
-            self._conn.execute("COMMIT")
+            self._execute("COMMIT")
             return result
         except Exception:
-            self._conn.execute("ROLLBACK")
+            self._execute("ROLLBACK")
             raise
 
     def _restore_data_inner(self, backup: dict[str, Any]) -> dict[str, Any]:
         # Delete edges before nodes (order is mandatory).
         for rel in ("TAGGED", "FEED_TAGGED", "HAS_NOTE", "HAS_ITEM"):
-            self._conn.execute(f"MATCH ()-[r:{rel}]->() DELETE r")
+            self._execute(f"MATCH ()-[r:{rel}]->() DELETE r")
         for node in ("Note", "Item", "Tag", "Feed", "Config"):
-            self._conn.execute(f"MATCH (n:{node}) DETACH DELETE n")
+            self._execute(f"MATCH (n:{node}) DETACH DELETE n")
 
         # Config — restore from backup then stamp current schema_version.
         for key, value in backup.get("config", {}).items():
@@ -1079,14 +1108,14 @@ class GraphService:
 
         # Tags (with original UUIDs so tag-name lookups stay consistent).
         for tag in backup.get("tags", []):
-            self._conn.execute(
+            self._execute(
                 "CREATE (:Tag {id: $id, name: $name})",
                 {"id": tag["id"], "name": tag["name"]},
             )
 
         # Feeds (no tag edges yet).
         for feed in backup.get("feeds", []):
-            self._conn.execute(
+            self._execute(
                 """
                 CREATE (:Feed {
                     url: $url, id: $id, title: $title, display_name: $display_name,
@@ -1116,7 +1145,7 @@ class GraphService:
 
         # Items with HAS_ITEM edges.
         for item in backup.get("items", []):
-            self._conn.execute(
+            self._execute(
                 """
                 CREATE (:Item {
                     guid: $guid, id: $id, url: $url, title: $title,
@@ -1148,14 +1177,14 @@ class GraphService:
                     "starred": item.get("starred", False),
                 },
             )
-            self._conn.execute(
+            self._execute(
                 "MATCH (f:Feed {url: $feed_url}), (i:Item {id: $id}) CREATE (f)-[:HAS_ITEM]->(i)",
                 {"feed_url": item["feed_url"], "id": item["id"]},
             )
 
         # Notes with HAS_NOTE edges; also sync note_body for FTS.
         for note in backup.get("notes", []):
-            self._conn.execute(
+            self._execute(
                 """
                 MATCH (i:Item {id: $item_id})
                 CREATE (i)-[:HAS_NOTE]->(:Note {
@@ -1179,7 +1208,7 @@ class GraphService:
                     ),
                 },
             )
-            self._conn.execute(
+            self._execute(
                 "MATCH (i:Item) WHERE i.id = $id SET i.note_body = $body",
                 {"id": note["item_id"], "body": note["body"]},
             )
@@ -1187,13 +1216,13 @@ class GraphService:
         # Tag edges.
         for feed in backup.get("feeds", []):
             for tag_name in feed.get("tags", []):
-                self._conn.execute(
+                self._execute(
                     "MATCH (f:Feed {id: $id}), (t:Tag {name: $name}) MERGE (f)-[:FEED_TAGGED]->(t)",
                     {"id": feed["id"], "name": tag_name},
                 )
         for item in backup.get("items", []):
             for tag_name in item.get("tags", []):
-                self._conn.execute(
+                self._execute(
                     "MATCH (i:Item {id: $id}), (t:Tag {name: $name}) MERGE (i)-[:TAGGED]->(t)",
                     {"id": item["id"], "name": tag_name},
                 )
@@ -1204,6 +1233,122 @@ class GraphService:
             "notes": len(backup.get("notes", [])),
             "tags": len(backup.get("tags", [])),
         }
+
+    # --- Topics ---
+
+    def _upsert_topic(self, name: str) -> str:
+        """Create Topic if it doesn't exist; increment item_count if it does. Returns UUID id."""
+        topic_id = str(uuid.uuid4())
+        self._execute(
+            "MERGE (t:Topic {name: $name}) "
+            "ON CREATE SET t.id = $id, t.item_count = 1 "
+            "ON MATCH SET t.item_count = t.item_count + 1",
+            {"name": name, "id": topic_id},
+        )
+        rows = _rows(
+            self._execute(
+                "MATCH (t:Topic {name: $name}) RETURN t.id AS id",
+                {"name": name},
+            )
+        )
+        return str(rows[0]["id"])
+
+    def link_item_topic(self, item_id: str, topic_name: str, score: float) -> None:
+        """Upsert topic and create ABOUT edge from Item to Topic; no-op if edge already exists."""
+        already = self._exists(
+            "MATCH (i:Item {id: $item_id})-[:ABOUT]->(t:Topic {name: $topic_name}) "
+            "RETURN count(*) AS cnt",
+            {"item_id": item_id, "topic_name": topic_name},
+        )
+        if not already:
+            self._upsert_topic(topic_name)
+            self._execute(
+                "MATCH (i:Item {id: $item_id}), (t:Topic {name: $topic_name}) "
+                "CREATE (i)-[:ABOUT {score: $score}]->(t)",
+                {"item_id": item_id, "topic_name": topic_name, "score": score},
+            )
+
+    def enrich_item(self, item_id: str, keywords: list[tuple[str, float]]) -> None:
+        """Upsert topics and link them to an item. No-op if keywords is empty."""
+        if not keywords:
+            return
+        for name, score in keywords:
+            self.link_item_topic(item_id, name, score)
+
+    def get_unenriched_items(self) -> list[dict[str, Any]]:
+        """Return all items with no outgoing ABOUT edges."""
+        return _rows(
+            self._execute(
+                "MATCH (i:Item) WHERE NOT (i)-[:ABOUT]->(:Topic) "
+                "RETURN i.id AS id, i.title AS title, "
+                "i.summary AS summary, i.content AS content"
+            )
+        )
+
+    def get_topics(
+        self, limit: int = 50, offset: int = 0
+    ) -> tuple[list[dict[str, Any]], int]:
+        count_rows = _rows(self._execute("MATCH (t:Topic) RETURN count(t) AS total"))
+        total = int(count_rows[0]["total"]) if count_rows else 0
+        rows = _rows(
+            self._execute(
+                "MATCH (t:Topic) "
+                "RETURN t.id AS id, t.name AS name, t.item_count AS item_count "
+                "ORDER BY t.item_count DESC "
+                "SKIP $offset LIMIT $limit",
+                {"offset": offset, "limit": limit},
+            )
+        )
+        return rows, total
+
+    def get_topic(self, topic_id: str) -> dict[str, Any] | None:
+        rows = _rows(
+            self._execute(
+                "MATCH (t:Topic) WHERE t.id = $id "
+                "RETURN t.id AS id, t.name AS name, t.item_count AS item_count",
+                {"id": topic_id},
+            )
+        )
+        if not rows:
+            return None
+        topic = rows[0]
+        item_rows = _rows(
+            self._execute(
+                "MATCH (i:Item)-[a:ABOUT]->(t:Topic) WHERE t.id = $id "
+                "OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(i) "
+                "RETURN i.id AS id, i.title AS title, i.url AS url, "
+                "f.id AS feed_id, coalesce(f.display_name, f.title) AS feed_title "
+                "ORDER BY a.score ASC LIMIT 20",
+                {"id": topic_id},
+            )
+        )
+        topic["items"] = [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "url": r["url"],
+                "feed": (
+                    {"id": r["feed_id"], "title": r["feed_title"]}
+                    if r.get("feed_id")
+                    else None
+                ),
+            }
+            for r in item_rows
+        ]
+        return topic
+
+    def get_item_topics(self, item_id: str) -> list[dict[str, Any]]:
+        return [
+            {"id": str(r["id"]), "name": str(r["name"]), "score": float(r["score"])}
+            for r in _rows(
+                self._execute(
+                    "MATCH (i:Item {id: $item_id})-[a:ABOUT]->(t:Topic) "
+                    "RETURN t.id AS id, t.name AS name, a.score AS score "
+                    "ORDER BY a.score ASC",
+                    {"item_id": item_id},
+                )
+            )
+        ]
 
     def close(self) -> None:
         self._conn.close()
