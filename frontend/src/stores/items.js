@@ -17,6 +17,7 @@ export const useItemsStore = defineStore('items', () => {
 
   const items = ref([])
   const total = ref(0)
+  const nextCursor = ref(null)
   const hasMore = ref(false)
   const loading = ref(false)
   const error = ref(null)
@@ -47,8 +48,20 @@ export const useItemsStore = defineStore('items', () => {
     () => CATCH_UP_VIEWS.includes(ui.view.type) && items.value.some((i) => !i.read),
   )
 
-  function currentParams(offset) {
-    return { ...ui.queryParams, limit: config.values.items_per_page, offset }
+  function isSearch() {
+    return ui.view.type === 'search'
+  }
+
+  function applyMeta(meta) {
+    if (isSearch()) {
+      total.value = meta.total ?? 0
+      nextCursor.value = null
+      hasMore.value = meta.has_more ?? false
+    } else {
+      total.value = 0
+      nextCursor.value = meta.next_cursor ?? null
+      hasMore.value = meta.next_cursor != null
+    }
   }
 
   async function load() {
@@ -59,17 +72,18 @@ export const useItemsStore = defineStore('items', () => {
     detail.value = null
     detailError.value = null
     try {
-      const endpoint = ui.view.type === 'search' ? '/search' : '/items'
-      const body = await api.get(endpoint, { params: currentParams(0) })
+      const endpoint = isSearch() ? '/search' : '/items'
+      const params = { ...ui.queryParams, limit: config.values.items_per_page }
+      const body = await api.get(endpoint, { params })
       if (token !== loadToken) return
       items.value = body.data
-      total.value = body.meta.total
-      hasMore.value = body.meta.has_more
+      applyMeta(body.meta)
     } catch (err) {
       if (token !== loadToken) return
       error.value = err
       items.value = []
       total.value = 0
+      nextCursor.value = null
       hasMore.value = false
     } finally {
       if (token === loadToken) loading.value = false
@@ -81,12 +95,16 @@ export const useItemsStore = defineStore('items', () => {
     const token = loadToken
     loading.value = true
     try {
-      const endpoint = ui.view.type === 'search' ? '/search' : '/items'
-      const body = await api.get(endpoint, { params: currentParams(items.value.length) })
+      const search = isSearch()
+      const endpoint = search ? '/search' : '/items'
+      const extraParam = search
+        ? { offset: items.value.length }
+        : { cursor: nextCursor.value }
+      const params = { ...ui.queryParams, limit: config.values.items_per_page, ...extraParam }
+      const body = await api.get(endpoint, { params })
       if (token !== loadToken) return // a fresh load() superseded this page
       items.value.push(...body.data)
-      total.value = body.meta.total
-      hasMore.value = body.meta.has_more
+      applyMeta(body.meta)
     } finally {
       if (token === loadToken) loading.value = false
     }
@@ -217,6 +235,7 @@ export const useItemsStore = defineStore('items', () => {
   return {
     items,
     total,
+    nextCursor,
     hasMore,
     loading,
     error,
