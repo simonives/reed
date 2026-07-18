@@ -15,9 +15,26 @@ from typing import Any
 
 import kuzu
 
+from .config import CONFIG_DEFAULTS
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 6
+
+_SAFE_URL_SCHEMES = frozenset({"http", "https"})
+
+# Config keys writable via PATCH /config and safe to restore from backup.
+# schema_version is managed separately and excluded intentionally.
+_ALLOWED_CONFIG_KEYS = frozenset(CONFIG_DEFAULTS.keys()) | {"default_poll_interval_minutes"}
+
+
+def _safe_url(url: str) -> str:
+    """Return url only if its scheme is http or https, otherwise empty string."""
+    try:
+        scheme = url.split("://", 1)[0].lower()
+    except (AttributeError, ValueError):
+        return ""
+    return url if scheme in _SAFE_URL_SCHEMES else ""
 
 _FEED_COLS = """
     f.id AS id, f.url AS url, f.title AS title, f.display_name AS display_name,
@@ -424,7 +441,7 @@ class GraphService:
                 "title": title,
                 "display_name": display_name,
                 "description": description,
-                "site_url": site_url,
+                "site_url": _safe_url(site_url),
                 "poll_interval_minutes": poll_interval_minutes,
                 "subscribed_at": datetime.now(UTC),
             },
@@ -605,7 +622,7 @@ class GraphService:
                 {
                     "guid": guid,
                     "id": item_id,
-                    "url": url,
+                    "url": _safe_url(url),
                     "title": title,
                     "summary": summary,
                     "content": content,
@@ -1173,9 +1190,12 @@ class GraphService:
         for node in ("Note", "Item", "Tag", "Feed", "Config"):
             self._execute(f"MATCH (n:{node}) DETACH DELETE n")
 
-        # Config — restore from backup then stamp current schema_version.
+        # Config — restore allowlisted keys then stamp current schema_version.
         for key, value in backup.get("config", {}).items():
-            self.set_config_value(key, value)
+            if key in _ALLOWED_CONFIG_KEYS:
+                self.set_config_value(key, value)
+            else:
+                logger.warning("restore_data: skipping unknown config key %r", key)
         self.set_config_value("schema_version", _SCHEMA_VERSION)
 
         # Tags (with original UUIDs so tag-name lookups stay consistent).
@@ -1204,7 +1224,7 @@ class GraphService:
                     "title": feed.get("title") or "",
                     "display_name": feed.get("display_name"),
                     "description": feed.get("description") or "",
-                    "site_url": feed.get("site_url") or "",
+                    "site_url": _safe_url(feed.get("site_url") or ""),
                     "poll_interval_minutes": feed.get("poll_interval_minutes"),
                     "reader_mode_enabled": feed.get("reader_mode_enabled"),
                     "subscribed_at": (
@@ -1229,7 +1249,7 @@ class GraphService:
                 {
                     "guid": item["guid"],
                     "id": item["id"],
-                    "url": item["url"],
+                    "url": _safe_url(item.get("url") or ""),
                     "title": item.get("title") or "",
                     "summary": "",
                     "content": "",

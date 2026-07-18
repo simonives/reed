@@ -13,7 +13,7 @@ import feedparser
 import httpx
 
 from .config import effective_config, effective_feed_settings
-from .graph import GraphService
+from .graph import GraphService, _safe_url
 from .http import http_client, safe_get
 from .reader import extract_article
 from .text import word_count
@@ -197,7 +197,7 @@ class FeedPoller:
             )
             if item_id is not None:
                 text = item_text(title, summary, content_html)
-                new_items.append((item_id, item_url, text))
+                new_items.append((item_id, _safe_url(item_url), text))
         return new_items
 
     def _enrich_item(self, item_id: str, text: str) -> None:

@@ -30,7 +30,7 @@
               <button class="btn" :class="{ 'btn--active': items.detail.read }" @click="items.toggleRead(items.detail)">
                 <span class="kbd">m</span> {{ items.detail.read ? 'Read' : 'Mark read' }}
               </button>
-              <a v-if="items.detail.url" class="btn" :href="items.detail.url" target="_blank" rel="noopener noreferrer">
+              <a v-if="items.detail.url" class="btn" :href="safeHref(items.detail.url)" target="_blank" rel="noopener noreferrer">
                 <span class="kbd">v</span> Source
               </a>
             </div>
@@ -51,6 +51,7 @@ import ArticleBody from './ArticleBody.vue'
 import ItemRow from './ItemRow.vue'
 import ViewHeader from './ViewHeader.vue'
 import { useItemsStore } from '../stores/items'
+import { safeHref } from '../lib/url'
 
 const items = useItemsStore()
 const scrollEl = ref(null)

@@ -40,7 +40,7 @@
         <button class="btn" :class="{ 'btn--active': detail.starred }" @click="items.toggleStar(detail)">
           <span class="kbd">s</span> {{ detail.starred ? 'Starred' : 'Star' }}
         </button>
-        <a v-if="detail.url" class="btn" :href="detail.url" target="_blank" rel="noopener noreferrer">
+        <a v-if="detail.url" class="btn" :href="safeHref(detail.url)" target="_blank" rel="noopener noreferrer">
           <span class="kbd">v</span> Source
         </a>
         <button v-if="canToggleReader" class="btn" @click="showReader = !showReader">
@@ -82,6 +82,7 @@ import { useConfigStore } from '../stores/config'
 import { useItemsStore } from '../stores/items'
 import { formatDateTime } from '../lib/format'
 import { pageDownScroll } from '../lib/scroll'
+import { safeHref } from '../lib/url'
 
 const items = useItemsStore()
 const config = useConfigStore()
