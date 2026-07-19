@@ -28,9 +28,11 @@ router = APIRouter(
 
 @router.get("/export")
 def export_data(graph: GraphService = Depends(get_graph)) -> Response:
+    now = datetime.now(UTC)
     backup = graph.export_data()
-    content = json.dumps(backup, ensure_ascii=False).encode("utf-8")
-    filename = f"reed-backup-{datetime.now(UTC).date().isoformat()}.json"
+    body = {"data": backup, "meta": {"exported_at": now.isoformat()}}
+    content = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    filename = f"reed-backup-{now.date().isoformat()}.json"
     return Response(
         content=content,
         media_type="application/json",
@@ -50,12 +52,22 @@ async def restore_data(
             detail=f"Backup file exceeds {MAX_RESTORE_BYTES // (1024 * 1024)} MB limit.",
         )
     try:
-        backup = json.loads(raw)
+        parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid JSON: {exc}",
         ) from exc
+    # Accept both envelope format {"data": {...backup...}} and legacy raw format.
+    # Guard: if "data" key exists but is not a dict, treat the whole parsed value as the backup
+    # so malformed envelopes get a clean 400 rather than an AttributeError.
+    unwrapped = parsed.get("data") if isinstance(parsed, dict) else None
+    backup = unwrapped if isinstance(unwrapped, dict) else parsed
+    if not isinstance(backup, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Backup must be a JSON object",
+        )
     missing = _REQUIRED_KEYS - set(backup.keys())
     if missing:
         raise HTTPException(

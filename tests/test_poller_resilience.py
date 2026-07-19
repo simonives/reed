@@ -109,6 +109,30 @@ class TestParallelPolling:
         assert elapsed < 0.12
 
 
+class TestGuidTitleFallback:
+    """#129 — title-fallback guid must be feed-scoped to prevent cross-feed merges."""
+
+    def test_same_title_different_feeds_creates_separate_items(self, graph):
+        graph.create_feed(url="https://a.example/rss", title="A", description="", site_url="")
+        graph.create_feed(url="https://b.example/rss", title="B", description="", site_url="")
+
+        def rss(link: str) -> bytes:
+            return (
+                b'<?xml version="1.0"?><rss version="2.0"><channel>'
+                b"<title>Feed</title><link>" + link.encode() + b"</link>"
+                b"<item><title>Untitled</title><description>Content</description></item>"
+                b"</channel></rss>"
+            )
+
+        poller = FeedPoller(graph)
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        poller._ingest_entries("https://a.example/rss", rss("https://a.example"), now)
+        poller._ingest_entries("https://b.example/rss", rss("https://b.example"), now)
+
+        _, total = graph.list_items()
+        assert total == 2, f"Expected 2 distinct items (one per feed), got {total}"
+
+
 class TestSubscribeFeedValidation:
     """#128 — POST /feeds must reject non-feed URLs."""
 

@@ -28,11 +28,17 @@ class TestExportEndpoint:
         assert "reed-backup-" in r.headers["content-disposition"]
         assert ".json" in r.headers["content-disposition"]
 
-    def test_response_has_required_keys(self, authed):
+    def test_response_is_envelope(self, authed):
         r = authed.get("/api/v1/data/export")
         body = r.json()
+        assert "data" in body
+        assert "meta" in body
+
+    def test_data_key_contains_backup_fields(self, authed):
+        r = authed.get("/api/v1/data/export")
+        data = r.json()["data"]
         for key in ("version", "feeds", "items", "notes", "tags", "config"):
-            assert key in body
+            assert key in data
 
     def test_no_auth_returns_401(self, reed_client):
         r = reed_client.get("/api/v1/data/export")
@@ -95,22 +101,35 @@ class TestRestoreEndpoint:
 
     def test_round_trip_with_data(self, authed, reed_client):
         graph = reed_client.app.state.graph
-        from datetime import UTC, datetime
         graph.create_feed(
             url="https://example.com/feed",
             title="Example",
             description="",
             site_url="",
         )
-        # Export
         export_r = authed.get("/api/v1/data/export")
         assert export_r.status_code == 200
-        backup_bytes = export_r.content
-        # Restore
         restore_r = authed.post(
             "/api/v1/data/restore",
-            files={"file": ("backup.json", backup_bytes, "application/json")},
+            files={"file": ("backup.json", export_r.content, "application/json")},
         )
         assert restore_r.status_code == 200
-        summary = restore_r.json()["data"]
-        assert summary["feeds"] == 1
+        assert restore_r.json()["data"]["feeds"] == 1
+
+    def test_restore_accepts_legacy_raw_format(self, authed):
+        """Backups created before the envelope change must still import cleanly."""
+        payload = json.dumps(MINIMAL_BACKUP).encode()
+        r = authed.post(
+            "/api/v1/data/restore",
+            files={"file": ("backup.json", payload, "application/json")},
+        )
+        assert r.status_code == 200
+
+    def test_restore_rejects_envelope_with_non_dict_data(self, authed):
+        """Envelope where 'data' is not a dict must return 400, not 500."""
+        payload = json.dumps({"data": [1, 2, 3], "meta": {}}).encode()
+        r = authed.post(
+            "/api/v1/data/restore",
+            files={"file": ("backup.json", payload, "application/json")},
+        )
+        assert r.status_code == 400

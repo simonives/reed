@@ -339,3 +339,30 @@ class TestSearchItems:
             assert results1[0]["id"] != results2[0]["id"]
         finally:
             gs.close()
+
+
+class TestSearchDeterministicOrder:
+    """#131 — score-tied results must have a stable secondary sort."""
+
+    def test_tied_score_results_are_stable_across_repeated_queries(self, tmp_path):
+        gs = _make_gs(tmp_path)
+        try:
+            _create_feed(gs)
+            for i in range(4):
+                gs.create_item(
+                    **_base_item(
+                        guid=f"https://example.com/{i}",
+                        url=f"https://example.com/{i}",
+                        title="python tutorial guide",
+                        summary="python tutorial guide content",
+                        content="<p>python tutorial guide content</p>",
+                        published_at=datetime(2026, 1, i + 1, tzinfo=UTC),
+                        fetched_at=datetime(2026, 1, i + 1, tzinfo=UTC),
+                    )
+                )
+            first, _ = gs.search_items("python", limit=4)
+            second, _ = gs.search_items("python", limit=4)
+            assert len(first) == 4
+            assert [r["guid"] for r in first] == [r["guid"] for r in second]
+        finally:
+            gs.close()

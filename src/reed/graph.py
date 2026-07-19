@@ -829,7 +829,7 @@ class GraphService:
                        i.read AS read, i.starred AS starred, i.word_count AS word_count,
                        score,
                        f.id AS feed_id, coalesce(f.display_name, f.title) AS feed_title
-                ORDER BY score DESC
+                ORDER BY score DESC, i.fetched_at DESC, i.guid ASC
                 SKIP $offset LIMIT $limit
                 """,
                 params,

@@ -180,9 +180,13 @@ class FeedPoller:
         parsed = feedparser.parse(content)
         new_items: list[tuple[str, str, str]] = []
         for entry in parsed.entries:
-            guid = entry.get("id") or entry.get("link") or entry.get("title", "")
+            guid = entry.get("id") or entry.get("link")
             if not guid:
-                continue
+                title = entry.get("title", "")
+                if not title:
+                    continue
+                # Namespace by feed URL so identical titles across feeds don't merge items.
+                guid = f"{feed_url}|{title}"
             item_url = entry.get("link", "")
             title = entry.get("title", "")
             summary = entry.get("summary", "")
