@@ -102,7 +102,18 @@ async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) 
     except (UnsafeURLError, httpx.HTTPError) as exc:
         raise _fetch_error_422(exc) from exc
 
-    parsed = feedparser.parse(response.content)
+    try:
+        parsed = await asyncio.to_thread(feedparser.parse, response.content)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Feed parse error: {exc}",
+        ) from exc
+    if not parsed.get("version"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="URL must point to a valid RSS or Atom feed",
+        )
     feed_meta = parsed.feed
 
     feed = await asyncio.to_thread(

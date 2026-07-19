@@ -40,10 +40,21 @@ class FeedPoller:
         self._running = True
         self._http = http_client()
         logger.info("Feed poller started")
-        await self._backfill_topics()
+        try:
+            await self._backfill_topics()
+        except Exception:
+            logger.warning("Topic backfill failed on startup; continuing", exc_info=True)
+        _backoff = 5
         try:
             while self._running:
-                await self._poll_due_feeds()
+                try:
+                    await self._poll_due_feeds()
+                    _backoff = 5
+                except Exception:
+                    logger.exception("Poll cycle failed; retrying in %ds", _backoff)
+                    await asyncio.sleep(_backoff)
+                    _backoff = min(_backoff * 2, 300)
+                    continue
                 await asyncio.sleep(60)
         finally:
             await self._http.aclose()
@@ -70,8 +81,10 @@ class FeedPoller:
         if not due:
             return
         logger.debug("Polling %d due feed(s)", len(due))
-        for feed in due:
-            await self._poll_feed(feed, now, self._http, config)
+        await asyncio.gather(
+            *(self._poll_feed(feed, now, self._http, config) for feed in due),
+            return_exceptions=True,
+        )
 
     def _is_due(self, feed: dict[str, Any], now: datetime, config: dict[str, Any]) -> bool:
         last_fetched = feed.get("last_fetched_at")
