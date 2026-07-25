@@ -138,6 +138,7 @@ class TestNoteBodySync:
 class TestMakeExcerpt:
     def test_wraps_matched_term_in_em(self):
         from reed.graph import _make_excerpt
+
         result = _make_excerpt("The quick brown fox jumps over the lazy dog", "fox")
         assert result is not None
         assert "<em>" in result
@@ -145,14 +146,17 @@ class TestMakeExcerpt:
 
     def test_returns_none_for_no_match(self):
         from reed.graph import _make_excerpt
+
         assert _make_excerpt("Hello world", "zzz") is None
 
     def test_returns_none_for_empty_text(self):
         from reed.graph import _make_excerpt
+
         assert _make_excerpt("", "foo") is None
 
     def test_strips_html_tags(self):
         from reed.graph import _make_excerpt
+
         result = _make_excerpt("<p>AI governance framework</p>", "governance")
         assert result is not None
         assert "<p>" not in result
@@ -160,6 +164,7 @@ class TestMakeExcerpt:
 
     def test_ellipsis_for_context_outside_window(self):
         from reed.graph import _make_excerpt
+
         long_text = "word " * 30 + "target " + "word " * 30
         result = _make_excerpt(long_text.strip(), "target")
         assert result is not None
@@ -169,26 +174,40 @@ class TestMakeExcerpt:
 class TestMatchSource:
     def test_content_match(self):
         from reed.graph import _match_source
+
         item = {"title": "AI governance", "summary": "", "content": "", "note_body": None}
         result = _match_source(item, "governance")
         assert "content" in result
 
     def test_note_only_match(self):
         from reed.graph import _match_source
-        item = {"title": "Unrelated", "summary": "Unrelated", "content": "Unrelated", "note_body": "governance notes"}
+
+        item = {
+            "title": "Unrelated",
+            "summary": "Unrelated",
+            "content": "Unrelated",
+            "note_body": "governance notes",
+        }
         result = _match_source(item, "governance")
         assert "note" in result
         assert "content" not in result
 
     def test_both_match(self):
         from reed.graph import _match_source
-        item = {"title": "governance", "summary": "", "content": "", "note_body": "governance notes"}
+
+        item = {
+            "title": "governance",
+            "summary": "",
+            "content": "",
+            "note_body": "governance notes",
+        }
         result = _match_source(item, "governance")
         assert "content" in result
         assert "note" in result
 
     def test_fallback_when_no_text_match(self):
         from reed.graph import _match_source
+
         item = {"title": "Unrelated", "summary": "", "content": "", "note_body": None}
         result = _match_source(item, "zzz")
         assert result == ["content"]
@@ -198,20 +217,26 @@ class TestSearchItems:
     def _setup(self, tmp_path):
         gs = _make_gs(tmp_path)
         _create_feed(gs)
-        gs.create_item(**_base_item(
-            guid="https://example.com/1",
-            title="AI governance in enterprise HR",
-            summary="",
-            content="<p>Accountability frameworks for artificial intelligence in HR systems.</p>",
-            author="Jane Smith",
-        ))
-        gs.create_item(**_base_item(
-            guid="https://example.com/2",
-            title="Supply chain optimisation",
-            summary="Logistics and procurement automation.",
-            content="<p>Reducing costs through smarter procurement.</p>",
-            author="Bob Jones",
-        ))
+        gs.create_item(
+            **_base_item(
+                guid="https://example.com/1",
+                title="AI governance in enterprise HR",
+                summary="",
+                content=(
+                    "<p>Accountability frameworks for artificial intelligence in HR systems.</p>"
+                ),
+                author="Jane Smith",
+            )
+        )
+        gs.create_item(
+            **_base_item(
+                guid="https://example.com/2",
+                title="Supply chain optimisation",
+                summary="Logistics and procurement automation.",
+                content="<p>Reducing costs through smarter procurement.</p>",
+                author="Bob Jones",
+            )
+        )
         return gs
 
     def test_returns_matching_items_ranked(self, tmp_path):
@@ -219,7 +244,11 @@ class TestSearchItems:
         try:
             results, total = gs.search_items("governance")
             assert total >= 1
-            assert any("governance" in r["title"].lower() or "governance" in (r.get("content") or "").lower() for r in results)
+            assert any(
+                "governance" in r["title"].lower()
+                or "governance" in (r.get("content") or "").lower()
+                for r in results
+            )
         finally:
             gs.close()
 
@@ -264,11 +293,13 @@ class TestSearchItems:
         gs = _make_gs(tmp_path)
         try:
             _create_feed(gs)
-            item_id = gs.create_item(**_base_item(
-                title="Unrelated title",
-                summary="Unrelated summary",
-                content="<p>Unrelated content.</p>",
-            ))
+            item_id = gs.create_item(
+                **_base_item(
+                    title="Unrelated title",
+                    summary="Unrelated summary",
+                    content="<p>Unrelated content.</p>",
+                )
+            )
             gs.put_note(item_id, "This item is about accountability governance.")
             results, _ = gs.search_items("accountability")
             assert len(results) >= 1
@@ -303,18 +334,22 @@ class TestSearchItems:
         try:
             _create_feed(gs, url="https://feed1.com/feed", feed_id="feed-1")
             _create_feed(gs, url="https://feed2.com/feed", feed_id="feed-2")
-            gs.create_item(**_base_item(
-                feed_url="https://feed1.com/feed",
-                guid="https://feed1.com/1",
-                title="AI governance report",
-                content="<p>Governance matters.</p>",
-            ))
-            gs.create_item(**_base_item(
-                feed_url="https://feed2.com/feed",
-                guid="https://feed2.com/1",
-                title="AI governance analysis",
-                content="<p>Governance here too.</p>",
-            ))
+            gs.create_item(
+                **_base_item(
+                    feed_url="https://feed1.com/feed",
+                    guid="https://feed1.com/1",
+                    title="AI governance report",
+                    content="<p>Governance matters.</p>",
+                )
+            )
+            gs.create_item(
+                **_base_item(
+                    feed_url="https://feed2.com/feed",
+                    guid="https://feed2.com/1",
+                    title="AI governance analysis",
+                    content="<p>Governance here too.</p>",
+                )
+            )
             results, total = gs.search_items("governance", feed_id="feed-1")
             assert total == 1
             assert results[0]["feed_id"] == "feed-1"
@@ -326,11 +361,13 @@ class TestSearchItems:
         try:
             _create_feed(gs)
             for i in range(5):
-                gs.create_item(**_base_item(
-                    guid=f"https://example.com/{i}",
-                    title=f"AI governance item {i}",
-                    content="<p>Governance content.</p>",
-                ))
+                gs.create_item(
+                    **_base_item(
+                        guid=f"https://example.com/{i}",
+                        title=f"AI governance item {i}",
+                        content="<p>Governance content.</p>",
+                    )
+                )
             results1, total = gs.search_items("governance", limit=2, offset=0)
             results2, _ = gs.search_items("governance", limit=2, offset=2)
             assert total >= 5

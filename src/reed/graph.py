@@ -36,6 +36,7 @@ def _safe_url(url: str) -> str:
         return ""
     return url if scheme in _SAFE_URL_SCHEMES else ""
 
+
 _FEED_COLS = """
     f.id AS id, f.url AS url, f.title AS title, f.display_name AS display_name,
     f.description AS description, f.site_url AS site_url,
@@ -130,7 +131,9 @@ class GraphService:
         self._conn_lock = threading.RLock()
         self._ensure_schema()
 
-    def _execute(self, query: str, params: dict | None = None):
+    def _execute(
+        self, query: str, params: dict[str, Any] | None = None
+    ) -> kuzu.QueryResult | list[kuzu.QueryResult]:
         with self._conn_lock:
             if params is not None:
                 return self._conn.execute(query, params)
@@ -226,9 +229,7 @@ class GraphService:
                 PRIMARY KEY (name)
             )
         """)
-        self._execute(
-            "CREATE REL TABLE IF NOT EXISTS ABOUT(FROM Item TO Topic, score DOUBLE)"
-        )
+        self._execute("CREATE REL TABLE IF NOT EXISTS ABOUT(FROM Item TO Topic, score DOUBLE)")
         # FTS index — CREATE_FTS_INDEX has no IF NOT EXISTS so we suppress errors.
         # On existing v3 DBs the column doesn't exist yet; _migrate_to_v4 creates it.
         _fts_cypher = (
@@ -743,7 +744,8 @@ class GraphService:
             cursor_clause = (
                 "\nWITH i, f"
                 "\nWHERE (coalesce(i.published_at, i.fetched_at) < $cursor_ts"
-                " OR (coalesce(i.published_at, i.fetched_at) = $cursor_ts AND i.guid > $cursor_guid))"
+                " OR (coalesce(i.published_at, i.fetched_at) = $cursor_ts"
+                " AND i.guid > $cursor_guid))"
             )
             params["cursor_ts"] = cursor_ts
             params["cursor_guid"] = cursor_guid
@@ -814,7 +816,9 @@ class GraphService:
 
         # count query must not include $offset/$limit — Kuzu rejects unused params
         count_params = {k: v for k, v in params.items() if k not in ("offset", "limit")}
-        count_rows = _rows(self._execute(f"{prefix} RETURN count(DISTINCT i) AS total", count_params))
+        count_rows = _rows(
+            self._execute(f"{prefix} RETURN count(DISTINCT i) AS total", count_params)
+        )
         total = int(count_rows[0]["total"]) if count_rows else 0
 
         rows = _rows(
@@ -932,9 +936,7 @@ class GraphService:
 
     def _item_guid(self, item_id: str) -> str | None:
         rows = _rows(
-            self._execute(
-                "MATCH (i:Item) WHERE i.id = $id RETURN i.guid AS guid", {"id": item_id}
-            )
+            self._execute("MATCH (i:Item) WHERE i.id = $id RETURN i.guid AS guid", {"id": item_id})
         )
         return rows[0]["guid"] if rows else None
 
@@ -1132,18 +1134,14 @@ class GraphService:
         ]
 
         tag_nodes = _rows(
-            self._execute(
-                "MATCH (t:Tag) RETURN t.id AS id, t.name AS name ORDER BY name"
-            )
+            self._execute("MATCH (t:Tag) RETURN t.id AS id, t.name AS name ORDER BY name")
         )
         tags = [{"id": t["id"], "name": t["name"]} for t in tag_nodes]
 
         config = {k: v for k, v in self.get_config_values().items() if k != "schema_version"}
 
         topic_rows = _rows(
-            self._execute(
-                "MATCH (t:Topic) RETURN t.id AS id, t.name AS name ORDER BY name"
-            )
+            self._execute("MATCH (t:Topic) RETURN t.id AS id, t.name AS name ORDER BY name")
         )
         topics_export = [{"id": str(t["id"]), "name": str(t["name"])} for t in topic_rows]
 
@@ -1183,7 +1181,8 @@ class GraphService:
                 raise
 
     def _restore_data_inner(self, backup: dict[str, Any]) -> dict[str, Any]:
-        # Delete Topic edges and nodes before clearing the rest (order matters for referential integrity)
+        # Delete Topic edges and nodes before clearing the rest (order matters
+        # for referential integrity)
         self._execute("MATCH ()-[r:ABOUT]->() DELETE r")
         self._execute("MATCH (t:Topic) DELETE t")
         # Delete edges before nodes (order is mandatory).
@@ -1273,7 +1272,8 @@ class GraphService:
             )
             if item.get("feed_url"):
                 self._execute(
-                    "MATCH (f:Feed {url: $feed_url}), (i:Item {id: $id}) CREATE (f)-[:HAS_ITEM]->(i)",
+                    "MATCH (f:Feed {url: $feed_url}), (i:Item {id: $id}) "
+                    "CREATE (f)-[:HAS_ITEM]->(i)",
                     {"feed_url": item["feed_url"], "id": item["id"]},
                 )
 
@@ -1334,15 +1334,17 @@ class GraphService:
             self._execute(
                 "MATCH (i:Item {guid: $item_guid}), (t:Topic {name: $topic_name}) "
                 "CREATE (i)-[:ABOUT {score: $score}]->(t)",
-                {"item_guid": edge["item_guid"], "topic_name": edge["topic_name"],
-                 "score": float(edge["score"])},
+                {
+                    "item_guid": edge["item_guid"],
+                    "topic_name": edge["topic_name"],
+                    "score": float(edge["score"]),
+                },
             )
 
         # Recompute item_count for each Topic from actual ABOUT edge counts.
         topic_counts = _rows(
             self._execute(
-                "MATCH (i:Item)-[:ABOUT]->(t:Topic) "
-                "RETURN t.name AS name, count(i) AS cnt"
+                "MATCH (i:Item)-[:ABOUT]->(t:Topic) RETURN t.name AS name, count(i) AS cnt"
             )
         )
         for row in topic_counts:
@@ -1413,9 +1415,7 @@ class GraphService:
             )
         )
 
-    def get_topics(
-        self, limit: int = 50, offset: int = 0
-    ) -> tuple[list[dict[str, Any]], int]:
+    def get_topics(self, limit: int = 50, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
         count_rows = _rows(self._execute("MATCH (t:Topic) RETURN count(t) AS total"))
         total = int(count_rows[0]["total"]) if count_rows else 0
         rows = _rows(
@@ -1456,9 +1456,7 @@ class GraphService:
                 "title": r["title"],
                 "url": r["url"],
                 "feed": (
-                    {"id": r["feed_id"], "title": r["feed_title"]}
-                    if r.get("feed_id")
-                    else None
+                    {"id": r["feed_id"], "title": r["feed_title"]} if r.get("feed_id") else None
                 ),
             }
             for r in item_rows

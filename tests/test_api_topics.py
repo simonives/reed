@@ -11,14 +11,14 @@ from reed.graph import GraphService
 from reed.poller import FeedPoller
 from reed.topics import extract_keywords, item_text, make_extractor
 
-
 TECH_RSS = b"""<?xml version="1.0"?><rss version="2.0"><channel>
   <title>Tech Feed</title>
   <item>
     <title>Machine learning and neural networks advance in 2026</title>
     <link>https://tech.example.com/1</link>
     <guid>https://tech.example.com/1</guid>
-    <description>Deep learning transformer models are reshaping natural language processing</description>
+    <description>Deep learning transformer models are reshaping natural language
+    processing</description>
   </item>
 </channel></rss>"""
 

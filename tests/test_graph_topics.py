@@ -169,22 +169,35 @@ class TestGetTopic:
         graph.create_feed(url="https://f.com/feed", title="F", description="", site_url="")
         now = datetime.now(UTC)
         id_high = graph.create_item(
-            feed_url="https://f.com/feed", guid="g1", url="https://f.com/1",
-            title="A", summary="", content="", author="", word_count=1,
-            published_at=None, fetched_at=now,
+            feed_url="https://f.com/feed",
+            guid="g1",
+            url="https://f.com/1",
+            title="A",
+            summary="",
+            content="",
+            author="",
+            word_count=1,
+            published_at=None,
+            fetched_at=now,
         )
         id_low = graph.create_item(
-            feed_url="https://f.com/feed", guid="g2", url="https://f.com/2",
-            title="B", summary="", content="", author="", word_count=1,
-            published_at=None, fetched_at=now,
+            feed_url="https://f.com/feed",
+            guid="g2",
+            url="https://f.com/2",
+            title="B",
+            summary="",
+            content="",
+            author="",
+            word_count=1,
+            published_at=None,
+            fetched_at=now,
         )
         graph.enrich_item(id_high, [("topic x", 0.9)])
         graph.enrich_item(id_low, [("topic x", 0.01)])
         topics, _ = graph.get_topics()
         topic = graph.get_topic(topics[0]["id"])
-        scores = [i.get("score") for i in topic["items"]] if topic else []
-        # Items in get_topic don't expose score in the response shape, but order should be ascending
-        # Verify the lower-score item appears first by checking the item order
+        # get_topic's items don't expose score, but order should be ascending —
+        # verify the lower-score item appears first by checking item order.
         assert topic["items"][0]["id"] == id_low
 
 
@@ -234,10 +247,16 @@ class TestEnrichedAt:
     def test_enrich_item_sets_enriched_at(self, graph):
         feed_url = "https://example.com/feed"
         item_id = graph.create_item(
-            feed_url=feed_url, guid="test-ea-2",
-            url="https://example.com/2", title="NLP",
-            summary="machine learning", content="", author="",
-            word_count=2, published_at=None, fetched_at=datetime.now(UTC),
+            feed_url=feed_url,
+            guid="test-ea-2",
+            url="https://example.com/2",
+            title="NLP",
+            summary="machine learning",
+            content="",
+            author="",
+            word_count=2,
+            published_at=None,
+            fetched_at=datetime.now(UTC),
         )
         graph.enrich_item(item_id, [("machine learning", 0.1)])
         item = graph.get_item(item_id)
@@ -246,10 +265,16 @@ class TestEnrichedAt:
     def test_enrich_item_empty_keywords_sets_enriched_at(self, graph):
         feed_url = "https://example.com/feed"
         item_id = graph.create_item(
-            feed_url=feed_url, guid="test-ea-3",
-            url="https://example.com/3", title=".",
-            summary="", content="", author="",
-            word_count=0, published_at=None, fetched_at=datetime.now(UTC),
+            feed_url=feed_url,
+            guid="test-ea-3",
+            url="https://example.com/3",
+            title=".",
+            summary="",
+            content="",
+            author="",
+            word_count=0,
+            published_at=None,
+            fetched_at=datetime.now(UTC),
         )
         graph.enrich_item(item_id, [])
         item = graph.get_item(item_id)
@@ -258,10 +283,16 @@ class TestEnrichedAt:
     def test_get_unenriched_excludes_enriched_items(self, graph):
         feed_url = "https://example.com/feed"
         item_id = graph.create_item(
-            feed_url=feed_url, guid="test-ea-4",
-            url="https://example.com/4", title="AI",
-            summary="neural networks", content="", author="",
-            word_count=2, published_at=None, fetched_at=datetime.now(UTC),
+            feed_url=feed_url,
+            guid="test-ea-4",
+            url="https://example.com/4",
+            title="AI",
+            summary="neural networks",
+            content="",
+            author="",
+            word_count=2,
+            published_at=None,
+            fetched_at=datetime.now(UTC),
         )
         assert any(r["id"] == item_id for r in graph.get_unenriched_items())
         graph.enrich_item(item_id, [("neural networks", 0.1)])
@@ -270,10 +301,16 @@ class TestEnrichedAt:
     def test_get_unenriched_includes_zero_keyword_before_enrich(self, graph):
         feed_url = "https://example.com/feed"
         item_id = graph.create_item(
-            feed_url=feed_url, guid="test-ea-5",
-            url="https://example.com/5", title=".",
-            summary="", content="", author="",
-            word_count=0, published_at=None, fetched_at=datetime.now(UTC),
+            feed_url=feed_url,
+            guid="test-ea-5",
+            url="https://example.com/5",
+            title=".",
+            summary="",
+            content="",
+            author="",
+            word_count=0,
+            published_at=None,
+            fetched_at=datetime.now(UTC),
         )
         assert any(r["id"] == item_id for r in graph.get_unenriched_items())
         graph.enrich_item(item_id, [])

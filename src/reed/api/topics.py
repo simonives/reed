@@ -29,9 +29,7 @@ def list_topics(
 
 
 @router.get("/{topic_id}")
-def get_topic(
-    topic_id: str, graph: GraphService = Depends(get_graph)
-) -> dict[str, Any]:
+def get_topic(topic_id: str, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     topic = graph.get_topic(topic_id)
     if topic is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")

@@ -132,9 +132,7 @@ class FeedPoller:
             etag = response.headers.get("ETag")
             last_modified = response.headers.get("Last-Modified")
 
-            new_items = await asyncio.to_thread(
-                self._ingest_entries, url, response.content, now
-            )
+            new_items = await asyncio.to_thread(self._ingest_entries, url, response.content, now)
             self._graph.update_feed_poll_metadata(url, now, etag, last_modified, None)
             logger.info("Polled %s: %d new item(s)", url, len(new_items))
 

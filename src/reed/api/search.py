@@ -26,9 +26,7 @@ def _search_item_response(item: dict[str, Any]) -> dict[str, Any]:
         "feed_id": item.get("feed_id"),
         "feed_title": item.get("feed_title"),
         "feed": (
-            {"id": item["feed_id"], "title": item["feed_title"]}
-            if item.get("feed_id")
-            else None
+            {"id": item["feed_id"], "title": item["feed_title"]} if item.get("feed_id") else None
         ),
         "published_at": item.get("published_at"),
         "fetched_at": item.get("fetched_at"),

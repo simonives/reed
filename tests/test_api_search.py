@@ -9,7 +9,6 @@ import pytest
 
 from reed.poller import FeedPoller
 
-
 CONTENT_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
@@ -37,7 +36,8 @@ CONTENT_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 @pytest.fixture
 def search_feed(authed, reed_client):
-    from .conftest import patched_feed_fetch, mock_http_response
+    from .conftest import mock_http_response, patched_feed_fetch
+
     with patched_feed_fetch(response=mock_http_response(CONTENT_RSS)):
         r = authed.post("/api/v1/feeds", json={"url": "https://example.com/feed.rss"})
     feed = r.json()["data"]

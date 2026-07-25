@@ -155,7 +155,5 @@ class TestSubscribeFeedValidation:
         from .conftest import patched_feed_fetch
 
         with patched_feed_fetch():
-            r = authed.post(
-                "/api/v1/feeds", json={"url": "https://example.com/feed.rss"}
-            )
+            r = authed.post("/api/v1/feeds", json={"url": "https://example.com/feed.rss"})
         assert r.status_code == 201

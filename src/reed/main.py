@@ -14,14 +14,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .api.config import router as config_router
+from .api.data import router as data_router
 from .api.errors import register_error_handlers
 from .api.feeds import router as feeds_router
 from .api.items import router as items_router
-from .api.data import router as data_router
 from .api.opml import router as opml_router
-from .api.topics import router as topics_router
 from .api.search import router as search_router
 from .api.tags import router as tags_router
+from .api.topics import router as topics_router
 from .config import get_settings
 from .graph import GraphService
 from .poller import FeedPoller

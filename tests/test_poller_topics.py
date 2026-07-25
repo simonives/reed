@@ -10,7 +10,6 @@ import pytest
 from reed.graph import GraphService
 from reed.poller import FeedPoller
 
-
 SIMPLE_RSS = b"""<?xml version="1.0"?><rss version="2.0"><channel>
   <title>Tech Feed</title>
   <item>
@@ -37,9 +36,7 @@ def graph(tmp_path):
 
 def test_ingest_entries_returns_triples(graph):
     poller = FeedPoller(graph)
-    results = poller._ingest_entries(
-        "https://tech.example.com/feed", SIMPLE_RSS, datetime.now(UTC)
-    )
+    results = poller._ingest_entries("https://tech.example.com/feed", SIMPLE_RSS, datetime.now(UTC))
     assert len(results) == 1
     item_id, item_url, text = results[0]
     assert isinstance(item_id, str)
@@ -49,9 +46,7 @@ def test_ingest_entries_returns_triples(graph):
 
 def test_ingest_entries_text_contains_title_and_summary(graph):
     poller = FeedPoller(graph)
-    results = poller._ingest_entries(
-        "https://tech.example.com/feed", SIMPLE_RSS, datetime.now(UTC)
-    )
+    results = poller._ingest_entries("https://tech.example.com/feed", SIMPLE_RSS, datetime.now(UTC))
     _, _, text = results[0]
     assert "Machine learning" in text or "machine learning" in text.lower()
 
@@ -94,7 +89,9 @@ async def test_enrich_new_items_creates_topics(graph):
         published_at=None,
         fetched_at=datetime.now(UTC),
     )
-    new_items = [(item_id, "https://tech.example.com/new", "Deep learning in natural language processing")]
+    new_items = [
+        (item_id, "https://tech.example.com/new", "Deep learning in natural language processing")
+    ]
     await poller._enrich_new_items(new_items)
     topics = graph.get_item_topics(item_id)
     assert len(topics) > 0

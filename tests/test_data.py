@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from reed.graph import GraphService, _SCHEMA_VERSION
+from reed.graph import _SCHEMA_VERSION, GraphService
 
 
 @pytest.fixture
@@ -73,7 +73,15 @@ class TestExportData:
         gs = _make_gs(tmp_path)
         _seed(gs)
         backup = gs.export_data()
-        assert set(backup.keys()) >= {"version", "exported_at", "feeds", "items", "notes", "tags", "config"}
+        assert set(backup.keys()) >= {
+            "version",
+            "exported_at",
+            "feeds",
+            "items",
+            "notes",
+            "tags",
+            "config",
+        }
 
     def test_version_is_1(self, tmp_path):
         gs = _make_gs(tmp_path)
@@ -142,8 +150,13 @@ class TestRestoreData:
         gs = _make_gs(tmp_path)
         _seed(gs)
         empty_backup = {
-            "version": 1, "exported_at": "2026-01-01T00:00:00+00:00",
-            "feeds": [], "items": [], "notes": [], "tags": [], "config": {},
+            "version": 1,
+            "exported_at": "2026-01-01T00:00:00+00:00",
+            "feeds": [],
+            "items": [],
+            "notes": [],
+            "tags": [],
+            "config": {},
         }
         gs.restore_data(empty_backup)
         assert gs.list_feeds() == []
@@ -167,9 +180,8 @@ class TestRestoreData:
         gs.restore_data(backup)
         # After restore, note_body on Item should be populated
         from reed.graph import _rows
-        rows = _rows(gs._conn.execute(
-            "MATCH (i:Item) RETURN i.note_body AS note_body"
-        ))
+
+        rows = _rows(gs._conn.execute("MATCH (i:Item) RETURN i.note_body AS note_body"))
         assert rows[0]["note_body"] == "Important note."
 
     def test_restore_preserves_schema_version(self, tmp_path):
@@ -213,7 +225,7 @@ class TestRestoreData:
             "tags": [],
             "config": {},
         }
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             gs.restore_data(bad_backup)
         # Transaction should have rolled back — original data must still be present
         assert len(gs.list_feeds()) == original_feed_count
@@ -263,8 +275,9 @@ class TestExportRestoreTopics:
         g.enrich_item(item["id"], [("ghost topic", 0.5)])
         backup_before = g.export_data()
         # Take a backup WITHOUT topics (simulate old backup)
-        backup_no_topics = {k: v for k, v in backup_before.items()
-                            if k not in ("topics", "about_edges")}
+        backup_no_topics = {
+            k: v for k, v in backup_before.items() if k not in ("topics", "about_edges")
+        }
         g.restore_data(backup_no_topics)
         # Ghost topics must be gone
         all_topics, _ = g.get_topics()

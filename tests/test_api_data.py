@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 
-
 MINIMAL_BACKUP = {
     "version": 1,
     "exported_at": "2026-07-17T00:00:00+00:00",
@@ -83,6 +82,7 @@ class TestRestoreEndpoint:
 
     def test_file_over_limit_returns_413(self, authed, monkeypatch):
         import reed.api.data as data_module
+
         monkeypatch.setattr(data_module, "MAX_RESTORE_BYTES", 10)
         payload = b"x" * 12
         r = authed.post(

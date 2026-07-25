@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from io import BytesIO
+from typing import Any
 
 import defusedxml
 import defusedxml.ElementTree as DefET
@@ -67,7 +68,7 @@ def parse_opml(data: bytes) -> ParseResult:
     candidates: dict[str, FeedCandidate] = {}
     unparseable = 0
 
-    def _collect(node: DefET.Element, ancestor_tags: list[str]) -> None:
+    def _collect(node: ET.Element, ancestor_tags: list[str]) -> None:
         nonlocal unparseable
         for child in node:
             if child.tag != "outline":
@@ -101,7 +102,7 @@ def parse_opml(data: bytes) -> ParseResult:
     return ParseResult(candidates=list(candidates.values()), unparseable=unparseable)
 
 
-def build_opml(feeds: list[dict]) -> str:
+def build_opml(feeds: list[dict[str, Any]]) -> str:
     """Build an OPML 2.0 document from a list of feed dicts (as returned by graph.list_feeds()).
 
     Feeds with N tags are nested under N tag-named folder outlines.
@@ -116,8 +117,8 @@ def build_opml(feeds: list[dict]) -> str:
     )
     body = ET.SubElement(root, "body")
 
-    tag_to_feeds: dict[str, list[dict]] = {}
-    untagged: list[dict] = []
+    tag_to_feeds: dict[str, list[dict[str, Any]]] = {}
+    untagged: list[dict[str, Any]] = []
     for feed in feeds:
         tags = feed.get("tags") or []
         if tags:
@@ -126,7 +127,7 @@ def build_opml(feeds: list[dict]) -> str:
         else:
             untagged.append(feed)
 
-    def _feed_outline(parent: ET.Element, feed: dict) -> None:
+    def _feed_outline(parent: ET.Element, feed: dict[str, Any]) -> None:
         label = feed.get("display_name") or feed.get("title") or feed["url"]
         ET.SubElement(
             parent,

@@ -158,11 +158,7 @@ import trafilatura
 
 downloaded = trafilatura.fetch_url(item_url)
 content = trafilatura.extract(
-    downloaded,
-    include_comments=False,
-    include_tables=True,
-    no_fallback=False,
-    output_format='txt'
+    downloaded, include_comments=False, include_tables=True, no_fallback=False, output_format="txt"
 )
 ```
 
@@ -180,10 +176,10 @@ Topics are extracted from item content using [YAKE](https://github.com/LIAAD/yak
 import yake
 
 extractor = yake.KeywordExtractor(
-    lan='en',
-    n=3,          # up to 3-word keyphrases
+    lan="en",
+    n=3,  # up to 3-word keyphrases
     dedupLim=0.7,
-    top=10        # top 10 topics per item
+    top=10,  # top 10 topics per item
 )
 
 keywords = extractor.extract_keywords(item_content)

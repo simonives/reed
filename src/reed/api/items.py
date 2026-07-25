@@ -16,7 +16,8 @@ from pydantic import BaseModel
 from ..graph import GraphService
 from ..reader import extract_article
 from .deps import get_graph, require_api_key
-from .schemas import cursor_paginated, envelope, item_detail_response, item_list_response, paginated
+from .schemas import cursor_paginated, envelope, item_detail_response, item_list_response
+
 
 def _encode_cursor(item: dict[str, Any]) -> str:
     ts = item.get("published_at") or item.get("fetched_at")
@@ -90,10 +91,10 @@ def list_items(
     if cursor is not None:
         try:
             cursor_ts, cursor_guid = _decode_cursor(cursor)
-        except ValueError:
+        except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
-            )
+            ) from exc
     items = graph.list_items_cursor(
         feed_id=feed_id,
         tag=tag,
@@ -110,9 +111,7 @@ def list_items(
 
 
 @router.post("/mark-read")
-def mark_read(
-    body: MarkReadRequest, graph: GraphService = Depends(get_graph)
-) -> dict[str, Any]:
+def mark_read(body: MarkReadRequest, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     if body.feed_id is not None and not graph.feed_exists_by_id(body.feed_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feed not found")
     count = graph.mark_read_bulk(feed_id=body.feed_id, before=body.before)

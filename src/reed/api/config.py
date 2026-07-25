@@ -46,9 +46,7 @@ def get_config(graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
 
 
 @router.patch("")
-def update_config(
-    body: ConfigUpdate, graph: GraphService = Depends(get_graph)
-) -> dict[str, Any]:
+def update_config(body: ConfigUpdate, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
     updates = body.model_dump(exclude_unset=True, exclude_none=True)
     if not updates:
         raise HTTPException(
