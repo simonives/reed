@@ -36,20 +36,6 @@ Resolved items are removed from this list and captured in the relevant design or
 
 ---
 
-## ShareTarget storage
-
-**Question:** Do configured share targets live in the Kuzu graph or in a separate config file (e.g. `config.yaml`)?
-
-**Affects:** Graph schema, settings UI implementation, backup/restore scope
-
-**Options:**
-- Graph node — `ShareTarget` node with properties for type, name, config; consistent with everything else being in Kuzu; included automatically in JSON export
-- Config file — separate `config.yaml` or `.env` entries; simpler for targets that are set once and rarely changed; easier to version-control (though API keys must be excluded)
-
-**Notes:** Lean toward the graph for consistency and because share targets should be included in the instance backup/restore. API keys stored as encrypted properties or excluded from export with a warning.
-
----
-
 ## Derived edge computation schedule
 
 **Question:** When are `SIMILAR_TO` and `RELATED_TO` edges recomputed?

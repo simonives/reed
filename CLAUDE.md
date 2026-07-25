@@ -169,7 +169,7 @@ The `superpowers@claude-plugins-official` plugin is installed and its methodolog
 
 **Required workflow for any new feature or significant change:**
 1. `/brainstorming` — before any implementation. No code until a design is presented and approved. Run adversarial review on the output before seeking Simon's approval (see Model routing above).
-2. `/writing-plans` — immediately after brainstorming approval. Implementation plan written to `docs/superpowers/specs/` and committed before coding begins.
+2. `/writing-plans` — immediately after brainstorming approval. Implementation plan written to `docs/superpowers/specs/` before coding begins. Note: `docs/superpowers/` is gitignored — specs live on disk for reference during implementation but are not committed to git.
 3. `/test-driven-development` — mandatory for all implementation. No production code without a failing test first. Delete code written before tests and start over — no exceptions.
 4. `/verification-before-completion` — before marking any task done. All tests pass, output is clean, behaviour matches the spec.
 5. `/finishing-a-development-branch` — before raising a PR.
