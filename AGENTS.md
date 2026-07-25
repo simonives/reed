@@ -1,8 +1,8 @@
-# Reed — Claude Context
-
-## Scope
+# Reed — Agent Context
 
 Reed is a self-hosted, open-source RSS reader with a graph-native data model, a public REST API, and a first-class MCP server. Single-user. AGPL-3.0-or-later licence.
+
+## Scope
 
 **Read the "Current status" subsection in full at the start of every session.** The project is complex and carries significant context across milestones — do not rely on memory of a previous session; verify current state there first.
 
@@ -93,7 +93,7 @@ reed/
 │   │   └── open-decisions.md      ← Unresolved design questions + resolution log
 │   ├── superpowers/
 │   │   ├── plans/                 ← Per-session implementation plans (one file per milestone phase)
-│   │   └── specs/                 ← Implementation specs (written by /writing-plans)
+│   │   └── specs/                 ← Implementation specs (written by the planning workflow)
 │   └── adr/                       ← Architecture Decision Records
 │
 ├── tests/                         ← Pytest test suite
@@ -110,9 +110,9 @@ The live list of unresolved design questions is at `docs/roadmap/open-decisions.
 
 ## Precedence
 
-This file is authoritative for all work in this repo — no parent CLAUDE.md exists inside it. Global `~/.claude/CLAUDE.md` DOCTRINE and preferences apply where not overridden here; this file overrides the global defaults on repo-specific technical and process matters regardless of recency.
+This file is authoritative for all work in this repo — no parent agent-instruction file exists inside it. Global default agent preferences apply where not overridden here; this file overrides those defaults on repo-specific technical and process matters regardless of recency.
 
-Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet 4.6, Opus 4.8) for repo workflows rather than the global tier-only routing, and it makes the Superpowers methodology (brainstorming → plan → TDD → verify → finish) mandatory for this repo even where the global default is lighter-weight.
+Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet 4.6, Opus 4.8) for repo workflows rather than tier-only routing, and it makes the Superpowers methodology (brainstorming → plan → TDD → verify → finish) mandatory for this repo even where a lighter-weight default might otherwise apply.
 
 ## Instructions
 
@@ -127,45 +127,45 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
   | Task | Model | How |
   |---|---|---|
   | Default — implementation, refactoring, debugging, file edits | Sonnet 4.6 | Default session model — no change needed |
-  | `/brainstorming` | Sonnet 4.6, max thinking budget | Simon confirms before brainstorming begins |
-  | `/code-review` | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
-  | `/security-review` | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
-  | Adversarial review (see Commands) | Gemini 3.1 Pro (High) via `agy` | Run by the assistant after brainstorming and after reviews |
+  | Brainstorming/design workflow | Sonnet 4.6, max thinking budget | Simon confirms before it begins |
+  | Code review workflow | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
+  | Security review workflow | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
+  | Adversarial review (see Commands) | Gemini 3.1 Pro (High) via `agy` | Run by the agent after brainstorming and after reviews |
 
 - **Keep "Current status" current.** Update the milestone/phase table and active session plan in Scope whenever a milestone phase completes or the plan changes. Do not let it drift.
 
 ### Commands
 
 - **Superpowers methodology — mandatory for all new features or significant changes.** The `superpowers@claude-plugins-official` plugin is installed; do not skip any hard gate without explicit instruction from Simon.
-  1. `/brainstorming` — before any implementation. No code until a design is presented and approved. Run the adversarial review workflow (below) on the output before seeking Simon's approval.
-  2. `/writing-plans` — immediately after brainstorming approval. Implementation plan written to `docs/superpowers/specs/` before coding begins. Note: `docs/superpowers/` is gitignored — specs live on disk for reference during implementation but are not committed to git.
-  3. `/test-driven-development` — mandatory for all implementation. No production code without a failing test first. Delete code written before tests and start over — no exceptions.
-  4. `/verification-before-completion` — before marking any task done. All tests pass, output is clean, behaviour matches the spec.
-  5. `/finishing-a-development-branch` — before raising a PR.
+  1. Brainstorming workflow — before any implementation. No code until a design is presented and approved. Run the adversarial review workflow (below) on the output before seeking Simon's approval.
+  2. Planning workflow — immediately after brainstorming approval. Implementation plan written to `docs/superpowers/specs/` before coding begins. Note: `docs/superpowers/` is gitignored — specs live on disk for reference during implementation but are not committed to git.
+  3. Test-driven development — mandatory for all implementation. No production code without a failing test first. Delete code written before tests and start over — no exceptions.
+  4. Verification before completion — before marking any task done. All tests pass, output is clean, behaviour matches the spec.
+  5. Finishing-a-branch workflow — before raising a PR.
 
   **For bug fixes:** write the failing test that reproduces the bug first, then fix. No exception.
 
   **For exploration or prototyping:** throwaway spikes are exempt from TDD but must be deleted before any production implementation begins. Do not adapt spike code — implement fresh from tests.
 
 - **After implementing any feature or fix:**
-  - Run `/simplify` if the new code has obvious duplication, verbosity, or abstraction opportunities.
-  - Run `/verify` to confirm the expected behaviour in a live context (not just that tests pass).
+  - Run the simplify workflow if the new code has obvious duplication, verbosity, or abstraction opportunities.
+  - Run the verify workflow to confirm the expected behaviour in a live context (not just that tests pass).
 
 - **Before any PR:**
-  - Run `/code-review` on the branch diff — mandatory for every PR. Simon runs this manually on Opus 4.8.
-  - Run `/security-review` if the change touches any of: auth (`api/deps.py`, `X-API-Key` handling, any new endpoint), external HTTP (poller fetch, feed subscription), Kuzu write paths (`graph.py` mutations), config or environment variable handling, or file I/O / data export/import.
+  - Run the code-review workflow on the branch diff — mandatory for every PR. Simon runs this manually on Opus 4.8.
+  - Run the security-review workflow if the change touches any of: auth (`api/deps.py`, `X-API-Key` handling, any new endpoint), external HTTP (poller fetch, feed subscription), Kuzu write paths (`graph.py` mutations), config or environment variable handling, or file I/O / data export/import.
   - After each review, run the adversarial review workflow (below) before presenting findings to Simon.
   - All work happens on a feature branch; PR into `main` — never commit directly to `main`.
 
-- **Adversarial review workflow.** Two outputs require a Gemini pass before Simon approves them: brainstorming proposals (after `/brainstorming`, before approval) and review findings (after `/code-review` or `/security-review`, before Simon acts on them).
+- **Adversarial review workflow.** Two outputs require a Gemini pass before Simon approves them: brainstorming proposals (after the brainstorming workflow, before approval) and review findings (after code-review or security-review, before Simon acts on them).
 
   Run:
   ```bash
   agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions --print-timeout 10m -p "<prompt>"
   ```
-  Construct the prompt with: brief project context (Reed is a self-hosted RSS reader; the component under review), the full Claude output (proposal or findings), and the instruction "You are an adversarial reviewer. Identify gaps, risks, missed cases, or alternative perspectives. What did Claude miss or get wrong?"
+  Construct the prompt with: brief project context (Reed is a self-hosted RSS reader; the component under review), the full agent output (proposal or findings), and the instruction "You are an adversarial reviewer. Identify gaps, risks, missed cases, or alternative perspectives. What did the agent miss or get wrong?"
 
-  Then present Simon with: Claude's output, Gemini's adversarial review (verbatim key points, attributed), and a one-paragraph synthesis of where they agree, where they diverge, and what the divergence means. Wait for Simon's explicit approval or amendment before proceeding.
+  Then present Simon with: the agent's output, Gemini's adversarial review (verbatim key points, attributed), and a one-paragraph synthesis of where they agree, where they diverge, and what the divergence means. Wait for Simon's explicit approval or amendment before proceeding.
 
 - **After any review (code-review or security-review):**
   - For every finding, create a GitHub issue in `simonives/reed`.
@@ -175,10 +175,10 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
 
 ## Negatives
 
-- **Do not skip a Superpowers hard gate** (brainstorming, writing-plans, TDD, verification, finishing-a-branch) **without explicit instruction from Simon** in that session. There is no standing exception — only Simon can waive a gate, and only in the moment.
+- **Do not skip a Superpowers hard gate** (brainstorming, planning, TDD, verification, finishing-a-branch) **without explicit instruction from Simon** in that session. There is no standing exception — only Simon can waive a gate, and only in the moment.
 - **Do not write production code before a failing test exists**, except for throwaway exploration spikes — and those must be deleted before production implementation begins; do not adapt spike code into the real implementation.
 - **Do not commit directly to `main`.** All work goes through a feature branch and a PR.
-- **Do not run `/code-review` or `/security-review` yourself.** Both are run manually by Simon on Opus 4.8 — open the PR and prompt him to run them rather than attempting to run them yourself.
+- **Do not run the code-review or security-review workflows yourself.** Both are run manually by Simon on Opus 4.8 — open the PR and prompt him to run them rather than attempting to run them yourself.
 - **Do not merge a Gemini adversarial concern into your own output silently.** Surface it explicitly alongside your synthesis and wait for Simon's call.
 - **Do not batch multiple review findings into one GitHub issue** — one finding, one issue. Exception: a finding already fixed within the same PR does not need an issue at all.
 - **Do not call Kuzu from anywhere except `graph.py`** (the single seam rule) — API routers, MCP server, and poller must go through it.

@@ -45,8 +45,9 @@ def mock_http_response(content: bytes = SAMPLE_RSS, status_code: int = 200):
 
 
 @contextmanager
-def patched_feed_fetch(response=None, side_effect=None):
-    """Patch the outbound HTTP fetch used by POST /feeds and /feeds/discover.
+def patched_feed_fetch(response=None, side_effect=None, module="reed.api.feeds"):
+    """Patch the outbound HTTP fetch used by POST /feeds, /feeds/discover, and
+    POST /opml/import (pass module="reed.api.opml" for the latter).
 
     safe_get resolves the host before fetching, so the SSRF resolver is stubbed
     to keep these tests hermetic (no real DNS); the host-blocking behaviour is
@@ -61,7 +62,7 @@ def patched_feed_fetch(response=None, side_effect=None):
     cm.__aenter__ = AsyncMock(return_value=mock_client)
     cm.__aexit__ = AsyncMock(return_value=False)
     with (
-        patch("reed.api.feeds.http_client", return_value=cm),
+        patch(f"{module}.http_client", return_value=cm),
         patch("reed.http._resolve_safe_ips", AsyncMock(return_value=["93.184.216.34"])),
     ):
         yield mock_client

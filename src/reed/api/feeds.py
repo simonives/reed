@@ -168,7 +168,7 @@ def delete_feed(feed_id: str, graph: GraphService = Depends(get_graph)) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feed not found")
 
 
-@router.post("/{feed_id}/refresh", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{feed_id}/refresh")
 async def refresh_feed(
     feed_id: str,
     graph: GraphService = Depends(get_graph),

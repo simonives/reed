@@ -1,8 +1,8 @@
-# Reed — Claude Context
-
-## Scope
+# Reed — Gemini / Antigravity Context
 
 Reed is a self-hosted, open-source RSS reader with a graph-native data model, a public REST API, and a first-class MCP server. Single-user. AGPL-3.0-or-later licence.
+
+## Scope
 
 **Read the "Current status" subsection in full at the start of every session.** The project is complex and carries significant context across milestones — do not rely on memory of a previous session; verify current state there first.
 
@@ -93,7 +93,7 @@ reed/
 │   │   └── open-decisions.md      ← Unresolved design questions + resolution log
 │   ├── superpowers/
 │   │   ├── plans/                 ← Per-session implementation plans (one file per milestone phase)
-│   │   └── specs/                 ← Implementation specs (written by /writing-plans)
+│   │   └── specs/                 ← Implementation specs (written by the planning workflow)
 │   └── adr/                       ← Architecture Decision Records
 │
 ├── tests/                         ← Pytest test suite
@@ -110,9 +110,9 @@ The live list of unresolved design questions is at `docs/roadmap/open-decisions.
 
 ## Precedence
 
-This file is authoritative for all work in this repo — no parent CLAUDE.md exists inside it. Global `~/.claude/CLAUDE.md` DOCTRINE and preferences apply where not overridden here; this file overrides the global defaults on repo-specific technical and process matters regardless of recency.
+This file is authoritative for all work in this repo when operating as Gemini via Antigravity (`agy`) — no parent instruction file exists inside it. Global default preferences apply where not overridden here; this file overrides those defaults on repo-specific technical and process matters regardless of recency.
 
-Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet 4.6, Opus 4.8) for repo workflows rather than the global tier-only routing, and it makes the Superpowers methodology (brainstorming → plan → TDD → verify → finish) mandatory for this repo even where the global default is lighter-weight.
+Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet 4.6, Opus 4.8) for the primary Claude-driven workflow in this repo rather than tier-only routing, and it makes the Superpowers methodology (brainstorming → plan → TDD → verify → finish) mandatory for this repo. When acting as Gemini here, you are most often the **adversarial reviewer** called out from a Claude Code session (see Commands), not the primary driver — treat the Claude-side process below as the standing workflow you are reviewing into, not one you initiate independently unless Simon asks you to directly.
 
 ## Instructions
 
@@ -126,62 +126,60 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
 
   | Task | Model | How |
   |---|---|---|
-  | Default — implementation, refactoring, debugging, file edits | Sonnet 4.6 | Default session model — no change needed |
-  | `/brainstorming` | Sonnet 4.6, max thinking budget | Simon confirms before brainstorming begins |
-  | `/code-review` | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
-  | `/security-review` | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
-  | Adversarial review (see Commands) | Gemini 3.1 Pro (High) via `agy` | Run by the assistant after brainstorming and after reviews |
+  | Default — implementation, refactoring, debugging, file edits | Sonnet 4.6 | Default session model in the Claude Code driver session |
+  | Brainstorming/design workflow | Sonnet 4.6, max thinking budget | Simon confirms before it begins |
+  | Code review workflow | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
+  | Security review workflow | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
+  | Adversarial review — **this is you** | Gemini 3.1 Pro (High) via `agy` | Called by the Claude-side assistant after brainstorming and after reviews |
 
-- **Keep "Current status" current.** Update the milestone/phase table and active session plan in Scope whenever a milestone phase completes or the plan changes. Do not let it drift.
+- **Keep "Current status" current.** Whoever is driving should update the milestone/phase table and active session plan in Scope whenever a milestone phase completes or the plan changes. Do not let it drift.
 
 ### Commands
 
-- **Superpowers methodology — mandatory for all new features or significant changes.** The `superpowers@claude-plugins-official` plugin is installed; do not skip any hard gate without explicit instruction from Simon.
-  1. `/brainstorming` — before any implementation. No code until a design is presented and approved. Run the adversarial review workflow (below) on the output before seeking Simon's approval.
-  2. `/writing-plans` — immediately after brainstorming approval. Implementation plan written to `docs/superpowers/specs/` before coding begins. Note: `docs/superpowers/` is gitignored — specs live on disk for reference during implementation but are not committed to git.
-  3. `/test-driven-development` — mandatory for all implementation. No production code without a failing test first. Delete code written before tests and start over — no exceptions.
-  4. `/verification-before-completion` — before marking any task done. All tests pass, output is clean, behaviour matches the spec.
-  5. `/finishing-a-development-branch` — before raising a PR.
+- **Superpowers methodology — mandatory for all new features or significant changes** in the primary (Claude Code) workflow. The `superpowers@claude-plugins-official` plugin is installed there; no hard gate is skipped without explicit instruction from Simon.
+  1. Brainstorming workflow — before any implementation. No code until a design is presented and approved. You are called in here to adversarially review the proposal before Simon approves it.
+  2. Planning workflow — immediately after brainstorming approval. Implementation plan written to `docs/superpowers/specs/` before coding begins. Note: `docs/superpowers/` is gitignored — specs live on disk for reference during implementation but are not committed to git.
+  3. Test-driven development — mandatory for all implementation. No production code without a failing test first. Code written before tests gets deleted and restarted — no exceptions.
+  4. Verification before completion — before marking any task done. All tests pass, output is clean, behaviour matches the spec.
+  5. Finishing-a-branch workflow — before raising a PR.
 
-  **For bug fixes:** write the failing test that reproduces the bug first, then fix. No exception.
+  **For bug fixes:** the failing test that reproduces the bug is written first, then the fix. No exception.
 
-  **For exploration or prototyping:** throwaway spikes are exempt from TDD but must be deleted before any production implementation begins. Do not adapt spike code — implement fresh from tests.
+  **For exploration or prototyping:** throwaway spikes are exempt from TDD but must be deleted before any production implementation begins. Spike code is never adapted into production — production is implemented fresh from tests.
 
-- **After implementing any feature or fix:**
-  - Run `/simplify` if the new code has obvious duplication, verbosity, or abstraction opportunities.
-  - Run `/verify` to confirm the expected behaviour in a live context (not just that tests pass).
+- **After implementing any feature or fix** (Claude-side): the simplify workflow runs if the new code has obvious duplication, verbosity, or abstraction opportunities; the verify workflow runs to confirm expected behaviour in a live context.
 
-- **Before any PR:**
-  - Run `/code-review` on the branch diff — mandatory for every PR. Simon runs this manually on Opus 4.8.
-  - Run `/security-review` if the change touches any of: auth (`api/deps.py`, `X-API-Key` handling, any new endpoint), external HTTP (poller fetch, feed subscription), Kuzu write paths (`graph.py` mutations), config or environment variable handling, or file I/O / data export/import.
-  - After each review, run the adversarial review workflow (below) before presenting findings to Simon.
-  - All work happens on a feature branch; PR into `main` — never commit directly to `main`.
+- **Before any PR** (Claude-side):
+  - The code-review workflow runs on the branch diff — mandatory for every PR, run manually by Simon on Opus 4.8.
+  - The security-review workflow runs if the change touches any of: auth (`api/deps.py`, `X-API-Key` handling, any new endpoint), external HTTP (poller fetch, feed subscription), Kuzu write paths (`graph.py` mutations), config or environment variable handling, or file I/O / data export/import.
+  - After each review, the adversarial review workflow below runs before findings are presented to Simon.
+  - All work happens on a feature branch; PR into `main` — never a direct commit to `main`.
 
-- **Adversarial review workflow.** Two outputs require a Gemini pass before Simon approves them: brainstorming proposals (after `/brainstorming`, before approval) and review findings (after `/code-review` or `/security-review`, before Simon acts on them).
+- **Adversarial review workflow — your primary role in this repo.** Two outputs require your pass before Simon approves them: brainstorming proposals (after the brainstorming workflow, before approval) and review findings (after code-review or security-review, before Simon acts on them).
 
-  Run:
+  You are invoked as:
   ```bash
   agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions --print-timeout 10m -p "<prompt>"
   ```
-  Construct the prompt with: brief project context (Reed is a self-hosted RSS reader; the component under review), the full Claude output (proposal or findings), and the instruction "You are an adversarial reviewer. Identify gaps, risks, missed cases, or alternative perspectives. What did Claude miss or get wrong?"
+  The prompt you receive carries: brief project context (Reed is a self-hosted RSS reader; the component under review), the full Claude output (proposal or findings), and the instruction to identify gaps, risks, missed cases, or alternative perspectives — what Claude missed or got wrong.
 
-  Then present Simon with: Claude's output, Gemini's adversarial review (verbatim key points, attributed), and a one-paragraph synthesis of where they agree, where they diverge, and what the divergence means. Wait for Simon's explicit approval or amendment before proceeding.
+  Your review is then presented to Simon alongside Claude's original output and a synthesis of where you agree, where you diverge, and what the divergence means. Nothing you raise gets silently folded into the other side's output — it is surfaced explicitly, and Simon gives explicit approval or amendment before anyone proceeds.
 
 - **After any review (code-review or security-review):**
-  - For every finding, create a GitHub issue in `simonives/reed`.
-  - Apply labels by finding type: `bug` (correctness), `security`, `performance`, `tech-debt`.
+  - For every finding, a GitHub issue is created in `simonives/reed`.
+  - Labels applied by finding type: `bug` (correctness), `security`, `performance`, `tech-debt`.
   - Issue title format: `<type>: <short description>` — e.g. `bug: create_item orphans items on resubscription`.
-  - Issue body must include: affected file(s) and line numbers, description of the problem, the exploit or failure scenario, and the recommended fix.
+  - Issue body includes: affected file(s) and line numbers, description of the problem, the exploit or failure scenario, and the recommended fix.
 
 ## Negatives
 
-- **Do not skip a Superpowers hard gate** (brainstorming, writing-plans, TDD, verification, finishing-a-branch) **without explicit instruction from Simon** in that session. There is no standing exception — only Simon can waive a gate, and only in the moment.
-- **Do not write production code before a failing test exists**, except for throwaway exploration spikes — and those must be deleted before production implementation begins; do not adapt spike code into the real implementation.
-- **Do not commit directly to `main`.** All work goes through a feature branch and a PR.
-- **Do not run `/code-review` or `/security-review` yourself.** Both are run manually by Simon on Opus 4.8 — open the PR and prompt him to run them rather than attempting to run them yourself.
-- **Do not merge a Gemini adversarial concern into your own output silently.** Surface it explicitly alongside your synthesis and wait for Simon's call.
-- **Do not batch multiple review findings into one GitHub issue** — one finding, one issue. Exception: a finding already fixed within the same PR does not need an issue at all.
-- **Do not call Kuzu from anywhere except `graph.py`** (the single seam rule) — API routers, MCP server, and poller must go through it.
+- **No Superpowers hard gate** (brainstorming, planning, TDD, verification, finishing-a-branch) **is skipped without explicit instruction from Simon** in that session. There is no standing exception — only Simon can waive a gate, and only in the moment.
+- **No production code is written before a failing test exists**, except for throwaway exploration spikes — and those are deleted before production implementation begins; spike code is never adapted into the real implementation.
+- **No direct commits to `main`.** All work goes through a feature branch and a PR.
+- **The code-review and security-review workflows are not run by an agent, Claude-side or Gemini-side.** Both are run manually by Simon on Opus 4.8.
+- **A Gemini adversarial concern is never merged into Claude's output silently.** It is surfaced explicitly alongside the synthesis, and Simon's call is awaited before proceeding.
+- **Multiple review findings are never batched into one GitHub issue** — one finding, one issue. Exception: a finding already fixed within the same PR does not need an issue at all.
+- **Kuzu is never called from anywhere except `graph.py`** (the single seam rule) — API routers, MCP server, and poller must go through it.
 
 ## Expiry
 

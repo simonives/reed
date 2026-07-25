@@ -9,6 +9,10 @@ import pytest
 
 from reed.opml import parse_opml
 
+from .conftest import mock_http_response, patched_feed_fetch
+
+NON_FEED_HTML = b"<html><body><h1>Page moved</h1></body></html>"
+
 SIMPLE_OPML = b"""<?xml version="1.0"?>
 <opml version="2.0">
   <body>
@@ -92,7 +96,8 @@ class TestImport:
                 {"url": "https://new.com/feed.rss", "title": "New Feed", "tags": ["tech", "news"]},
             ]
         }
-        r = authed.post("/api/v1/opml/import", json=body)
+        with patched_feed_fetch(module="reed.api.opml"):
+            r = authed.post("/api/v1/opml/import", json=body)
         assert r.status_code == 200
         data = r.json()["data"]
         assert data["added"] == 1
@@ -136,7 +141,8 @@ class TestImport:
                     {"url": "https://good.com/feed.rss", "title": "Good", "tags": []},
                 ]
             }
-            r = authed.post("/api/v1/opml/import", json=body)
+            with patched_feed_fetch(module="reed.api.opml"):
+                r = authed.post("/api/v1/opml/import", json=body)
         finally:
             reed_client.app.state.graph.create_feed = original
 
@@ -145,6 +151,40 @@ class TestImport:
         assert data["added"] == 1
         assert len(data["failed"]) == 1
         assert data["failed"][0]["url"] == "https://fail.com/feed.rss"
+
+    def test_skips_and_reports_url_that_is_not_a_feed(self, authed):
+        """#139: OPML import must validate each URL is a real feed before
+        creating a Feed node, mirroring the validation subscribe() got in #138.
+        A URL that returns non-feed HTML (e.g. moved/stale, common in OPML
+        exports from other readers) must be skipped and reported in failed[],
+        not silently turned into a Feed node the poller can never ingest.
+        """
+
+        def _fetch(url, **kwargs):
+            if "bad.com" in str(url):
+                return mock_http_response(content=NON_FEED_HTML)
+            return mock_http_response()
+
+        body = {
+            "feeds": [
+                {"url": "https://good.com/feed.rss", "title": "Good", "tags": []},
+                {"url": "https://bad.com/moved", "title": "Bad", "tags": []},
+            ]
+        }
+        with patched_feed_fetch(module="reed.api.opml", side_effect=_fetch):
+            r = authed.post("/api/v1/opml/import", json=body)
+
+        assert r.status_code == 200
+        data = r.json()["data"]
+        assert data["added"] == 1
+        assert data["skipped"] == 0
+        assert len(data["failed"]) == 1
+        assert data["failed"][0]["url"] == "https://bad.com/moved"
+
+        feeds = authed.get("/api/v1/feeds").json()["data"]
+        urls = {f["url"] for f in feeds}
+        assert "https://good.com/feed.rss" in urls
+        assert "https://bad.com/moved" not in urls
 
     def test_no_auth_returns_401(self, reed_client):
         r = reed_client.post("/api/v1/opml/import", json={"feeds": []})

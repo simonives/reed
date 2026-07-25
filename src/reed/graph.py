@@ -16,25 +16,15 @@ from typing import Any
 import kuzu
 
 from .config import CONFIG_DEFAULTS
+from .http import safe_url as _safe_url
 
 logger = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 6
 
-_SAFE_URL_SCHEMES = frozenset({"http", "https"})
-
 # Config keys writable via PATCH /config and safe to restore from backup.
 # schema_version is managed separately and excluded intentionally.
 _ALLOWED_CONFIG_KEYS = frozenset(CONFIG_DEFAULTS.keys()) | {"default_poll_interval_minutes"}
-
-
-def _safe_url(url: str) -> str:
-    """Return url only if its scheme is http or https, otherwise empty string."""
-    try:
-        scheme = url.split("://", 1)[0].lower()
-    except (AttributeError, ValueError):
-        return ""
-    return url if scheme in _SAFE_URL_SCHEMES else ""
 
 
 _FEED_COLS = """
@@ -1169,7 +1159,25 @@ class GraphService:
         }
 
     def restore_data(self, backup: dict[str, Any]) -> dict[str, Any]:
-        """Clear all data and re-insert from backup. Schema is never touched."""
+        """Clear all data and re-insert from backup. Schema is never touched.
+
+        Kuzu transactions are connection-scoped, and every thread shares this
+        one `kuzu.Connection`, so a statement issued by another thread while
+        this transaction is open would execute inside it — silently
+        entangling an unrelated write, or exposing a half-cleared graph to a
+        concurrent read (#124). This method therefore holds `_conn_lock` for
+        the *entire* transaction, not just around BEGIN/COMMIT/ROLLBACK: the
+        `with` block here stays entered across every nested `_execute` call
+        `_restore_data_inner` makes, so no other thread's `_execute` (which
+        acquires the same lock) can run until this transaction has committed
+        or rolled back. This relies on `_conn_lock` being a `threading.RLock`
+        — the reentrant acquire from nested `_execute` calls on this same
+        thread must succeed immediately without releasing the lock to other
+        threads. Do not change `_conn_lock` to a plain `threading.Lock`; that
+        would deadlock here (and reintroduce this issue's failure mode if
+        someone "fixed" the deadlock by moving the lock back inside
+        `_execute`).
+        """
         with self._conn_lock:
             self._execute("BEGIN TRANSACTION")
             try:

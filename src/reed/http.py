@@ -20,9 +20,30 @@ USER_AGENT = "Reed RSS Reader/0.1 (+https://github.com/simonives/reed)"
 
 _MAX_REDIRECTS = 10
 
+# Single source of truth for the http/https scheme allowlist. graph.py's
+# _safe_url() imports this rather than keeping an independent copy, so the
+# outbound-fetch SSRF guard and the stored/exported URL sanitiser can never
+# drift apart (#136).
+SAFE_URL_SCHEMES = frozenset({"http", "https"})
+
 
 class UnsafeURLError(Exception):
     """Raised when a URL resolves to a disallowed scheme or address range."""
+
+
+def safe_url(url: str) -> str:
+    """Return url only if its scheme is http or https, otherwise empty string.
+
+    Used by graph.py to sanitise stored/exported URLs before they leave the
+    graph (rendering, backup export). Parses with httpx.URL — the same parser
+    _require_safe_url uses for the SSRF guard — so the two paths agree on
+    scheme-extraction edge cases (e.g. a scheme with no `//`).
+    """
+    try:
+        scheme = httpx.URL(url).scheme
+    except httpx.InvalidURL:
+        return ""
+    return url if scheme in SAFE_URL_SCHEMES else ""
 
 
 def http_client() -> httpx.AsyncClient:
@@ -109,7 +130,7 @@ async def _require_safe_url(url: httpx.URL) -> None:
     (and surfaces _resolve_safe_ips's specific message) for an obviously-internal
     or unresolvable host.
     """
-    if url.scheme not in ("http", "https"):
+    if url.scheme not in SAFE_URL_SCHEMES:
         raise UnsafeURLError(f"Disallowed scheme: {url.scheme!r}")
     if not url.host:
         raise UnsafeURLError("URL has no host")

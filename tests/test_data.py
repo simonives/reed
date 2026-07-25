@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+import types
 from datetime import UTC, datetime
 
 import pytest
@@ -373,5 +376,147 @@ class TestExportOrphanedItems:
             gs.restore_data(backup)
             items = gs.list_items_cursor(starred_only=True)
             assert any(i["guid"] == "g1" for i in items)
+        finally:
+            gs.close()
+
+    def test_note_on_orphaned_item_survives_export_and_restore(self, tmp_path):
+        """A note on an item whose feed was deleted must not be silently
+        dropped: it must be exported, and restore must be able to attach it
+        (the item it references must also have been exported, per #125).
+        """
+        gs = self._make_gs(tmp_path)
+        try:
+            item_id = self._seed_item(gs, starred=True)
+            gs.put_note(item_id, "Important note.")
+            backup = gs.export_data()
+            assert any(n["item_id"] == item_id for n in backup["notes"])
+
+            gs.restore_data(backup)
+            restored = gs.export_data()
+            assert any(n["item_id"] == item_id for n in restored["notes"])
+            assert any(i["guid"] == "g1" for i in restored["items"])
+        finally:
+            gs.close()
+
+
+class TestRestoreTransactionIsolation:
+    """#124 — restore_data must hold the connection lock for the whole
+    transaction, so a concurrent write from another thread cannot execute
+    against the connection while the restore transaction is open (it would
+    otherwise interleave into the open BEGIN/COMMIT and either get silently
+    rolled back with the restore, get committed as part of it, or abort the
+    transaction outright).
+    """
+
+    def test_concurrent_write_is_blocked_until_restore_completes(self, tmp_path):
+        gs = GraphService(str(tmp_path / "test.kuzu"))
+        try:
+            # Enough statements to give a concurrent thread a realistic
+            # window to interleave if the lock were released between them.
+            backup = {
+                "version": 1,
+                "feeds": [],
+                "items": [],
+                "notes": [],
+                "tags": [{"id": str(i), "name": f"tag{i}"} for i in range(3000)],
+                "topics": [],
+                "about_edges": [],
+                "config": {},
+            }
+
+            timestamps: dict[str, float] = {}
+
+            def run_restore() -> None:
+                timestamps["restore_start"] = time.monotonic()
+                gs.restore_data(backup)
+                timestamps["restore_end"] = time.monotonic()
+
+            restore_thread = threading.Thread(target=run_restore)
+            restore_thread.start()
+            time.sleep(0.05)  # let the restore transaction open
+
+            timestamps["concurrent_start"] = time.monotonic()
+            gs.create_feed(
+                url="https://concurrent.example/feed",
+                title="Concurrent",
+                description="",
+                site_url="",
+            )
+            timestamps["concurrent_end"] = time.monotonic()
+
+            restore_thread.join(timeout=10)
+            assert not restore_thread.is_alive()
+
+            # The concurrent write must not have completed while the restore
+            # transaction was still open — it must have blocked on the lock
+            # until restore_data released it.
+            assert timestamps["concurrent_end"] >= timestamps["restore_end"], (
+                "concurrent write completed before the restore transaction "
+                "finished — it interleaved into the open restore transaction "
+                "instead of waiting for the whole-transaction lock"
+            )
+        finally:
+            gs.close()
+
+    def test_old_per_statement_locking_would_have_let_the_write_interleave(self, tmp_path):
+        """Control case: reproduces the pre-fix restore_data (BEGIN/COMMIT run
+        through the normal per-statement-locking _execute, with no lock held
+        across the whole transaction) to prove the assertion above actually
+        distinguishes correct from buggy behaviour, rather than passing
+        unconditionally.
+        """
+        gs = GraphService(str(tmp_path / "test.kuzu"))
+        try:
+            backup = {
+                "version": 1,
+                "feeds": [],
+                "items": [],
+                "notes": [],
+                "tags": [{"id": str(i), "name": f"tag{i}"} for i in range(3000)],
+                "topics": [],
+                "about_edges": [],
+                "config": {},
+            }
+
+            def unlocked_restore_data(self, backup):
+                self._execute("BEGIN TRANSACTION")
+                try:
+                    result = self._restore_data_inner(backup)
+                    self._execute("COMMIT")
+                    return result
+                except Exception:
+                    self._execute("ROLLBACK")
+                    raise
+
+            gs.restore_data = types.MethodType(unlocked_restore_data, gs)
+
+            timestamps: dict[str, float] = {}
+
+            def run_restore() -> None:
+                timestamps["restore_start"] = time.monotonic()
+                gs.restore_data(backup)
+                timestamps["restore_end"] = time.monotonic()
+
+            restore_thread = threading.Thread(target=run_restore)
+            restore_thread.start()
+            time.sleep(0.05)
+
+            timestamps["concurrent_start"] = time.monotonic()
+            gs.create_feed(
+                url="https://concurrent.example/feed",
+                title="Concurrent",
+                description="",
+                site_url="",
+            )
+            timestamps["concurrent_end"] = time.monotonic()
+
+            restore_thread.join(timeout=10)
+            assert not restore_thread.is_alive()
+
+            assert timestamps["concurrent_end"] < timestamps["restore_end"], (
+                "expected the unlocked control implementation to let the "
+                "concurrent write interleave — if it didn't, this test's "
+                "timing assumptions no longer hold and it should be revisited"
+            )
         finally:
             gs.close()

@@ -266,7 +266,10 @@ class TestRefreshEndpoint:
     def test_refresh_polls_feed(self, authed, subscribed_feed):
         with patch("reed.poller.FeedPoller._poll_feed", AsyncMock()) as mock_poll:
             r = authed.post(f"/api/v1/feeds/{subscribed_feed['id']}/refresh")
-        assert r.status_code == 202
+        # #132: the handler awaits the refresh to full completion and returns
+        # the final feed state in the body, so 200 is the honest status code —
+        # 202 Accepted implies deferred work that never actually happens here.
+        assert r.status_code == 200
         mock_poll.assert_awaited_once()
 
     def test_refresh_unknown_feed_returns_404(self, authed):
