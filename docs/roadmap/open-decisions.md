@@ -80,14 +80,6 @@ Resolved items are removed from this list and captured in the relevant design or
 
 ---
 
-## Repository name confirmation
-
-**Question:** Is `reed` clean on PyPI and Docker Hub in addition to GitHub?
-
-**Status:** GitHub repo created at `simonives/reed` (private). PyPI (`reed`) and Docker Hub (`reed`) not yet checked.
-
----
-
 ## Resolved decisions (moved here for reference)
 
 | Decision | Resolved in |
@@ -107,6 +99,7 @@ Resolved items are removed from this list and captured in the relevant design or
 | OPML folder handling (map to flat tags, surface mapping in import response) | `docs/design/user-patterns.md` |
 | Instance backup format (JSON via API for portability; Kuzu dir copy for fast local backup) | `docs/architecture/api-design.md` |
 | PyPI package name (`reed-rss`; CLI entry point remains `reed`) | `pyproject.toml` |
+| Repository/registry naming (GitHub `simonives/reed`; PyPI `reed` taken, `reed-rss` used; Docker Hub not applicable — packaging is GHCR, namespaced to the GitHub repo) | `pyproject.toml`, ADR-005 |
 | v1 feed ingestion patterns | `docs/design/user-patterns.md` |
 | v1 reading patterns | `docs/design/user-patterns.md` |
 | Import/export scope (OPML + JSON profile + instance backup) | `docs/design/user-patterns.md` |
