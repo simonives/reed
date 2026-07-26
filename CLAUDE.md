@@ -35,12 +35,19 @@ M5 is decomposed into four independently-specced sub-projects (specs and plans o
 
 | Sub-project | Scope | Status |
 |---|---|---|
-| 1. Graph query endpoints | Derived-edge recompute job (`SIMILAR_TO`/`RELATED_TO`, schema v7), six `/api/v1/graph/*` endpoints | In progress — Tasks 1-2 (schema v7, `recompute_derived_edges`) committed; Tasks 3-9 (poller wiring, five endpoints, recompute trigger) dispatched to a background agent as of 2026-07-25, check `worktree-m5-graph-query-endpoints` branch for latest |
+| 1. Graph query endpoints | Derived-edge recompute job (`SIMILAR_TO`/`RELATED_TO`, schema v7), six `/api/v1/graph/*` endpoints | **Complete and merged** (PR #159, 2026-07-26) |
 | 2. Share sheet | `ShareTarget` node (schema v8), `/share/*` CRUD + delivery (webhook, Raindrop.io), Settings UI + reading-view Share button | Specced, not started |
 | 3. Export/import reshape | Reconcile `/data/*`, `/opml/*` against `api-design.md`'s `/export/*`, `/import/*` shape; `X-Confirm-Destructive` header on restore | Specced, not started |
 | 4. Topics API completion | `/topics/{id}/items`, `/topics/{id}/related`; fixes issue #99 by deletion | Specced, not started — depends on sub-project 1's `RELATED_TO` schema |
 
-Active session plan: continuing M5 sub-project 1 (graph query endpoints) execution against its existing plan. Next after that: sub-projects 2-4 in the order above (already the specced dependency order). See Expiry for the refresh trigger on this subsection.
+**M6 gate — do not start M6 (MCP server) work until these are resolved.** PR #159's review surfaced two HIGH/MEDIUM-severity defects in the poller/recompute lifecycle that M6's tools (`trigger_recompute` and friends) would otherwise build directly on top of:
+- **#160** (HIGH) — a derived-edge recompute failure permanently kills the background poller (regression against M4-C's poller-resilience work)
+- **#161** (MEDIUM) — `POST /graph/recompute`'s fire-and-forget task can be garbage-collected mid-flight
+- **#162** (MEDIUM) — `GraphService.close()` can block the entire event loop during shutdown if a recompute is mid-flight
+
+Issues #163-#165 (LOW severity — topic-timeline null bucket, feed-health null-timestamp edge case, duplicated magic number) do not block M6 and can be picked up opportunistically during M5 sub-projects 2-4.
+
+Active session plan: M5 sub-project 2 (share sheet) is next per the specced dependency order — but resolve #160-#162 first, before M6, per the gate above. See Expiry for the refresh trigger on this subsection.
 
 **Architecture**
 
