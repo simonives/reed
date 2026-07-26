@@ -10,7 +10,7 @@ import pathlib
 import re
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import kuzu
@@ -20,7 +20,7 @@ from .http import safe_url as _safe_url
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 # Config keys writable via PATCH /config and safe to restore from backup.
 # schema_version is managed separately and excluded intentionally.
@@ -220,6 +220,14 @@ class GraphService:
             )
         """)
         self._execute("CREATE REL TABLE IF NOT EXISTS ABOUT(FROM Item TO Topic, score DOUBLE)")
+        self._execute(
+            "CREATE REL TABLE IF NOT EXISTS SIMILAR_TO"
+            "(FROM Item TO Item, score DOUBLE, computed_at TIMESTAMP)"
+        )
+        self._execute(
+            "CREATE REL TABLE IF NOT EXISTS RELATED_TO"
+            "(FROM Topic TO Topic, weight DOUBLE, computed_at TIMESTAMP)"
+        )
         # FTS index — CREATE_FTS_INDEX has no IF NOT EXISTS so we suppress errors.
         # On existing v3 DBs the column doesn't exist yet; _migrate_to_v4 creates it.
         _fts_cypher = (
@@ -254,6 +262,7 @@ class GraphService:
             (4, self._migrate_to_v4),
             (5, self._migrate_to_v5),
             (6, self._migrate_to_v6),
+            (7, self._migrate_to_v7),
         ]
         for target, run in migrations:
             if target > stored:
@@ -372,6 +381,11 @@ class GraphService:
 
     def _migrate_to_v6(self) -> None:
         self._execute("ALTER TABLE Item ADD enriched_at TIMESTAMP DEFAULT NULL")
+
+    def _migrate_to_v7(self) -> None:
+        # SIMILAR_TO and RELATED_TO rel tables are created by _init_schema
+        # (IF NOT EXISTS). Mirrors how _migrate_to_v5 handled Topic/ABOUT.
+        pass
 
     def _exists(self, query: str, params: dict[str, Any]) -> bool:
         rows = _rows(self._execute(query, params))
@@ -1484,6 +1498,232 @@ class GraphService:
             )
         ]
 
+    def recompute_derived_edges(
+        self, *, window_days: int, score_threshold: float, now: datetime | None = None
+    ) -> None:
+        """Recompute SIMILAR_TO (Item-Item) and RELATED_TO (Topic-Topic) edges.
+
+        Mark-and-sweep: every edge still valid gets computed_at stamped to `now`
+        by MERGE; a sweep afterwards deletes anything that no longer satisfies
+        the validity criteria (re-evaluated directly, not inferred from a stale
+        computed_at). This is correct regardless of *why* an edge stopped
+        qualifying (item aged out of the window, item deleted, or
+        score/co-occurrence dropped below threshold) — a prune keyed on the
+        item-age window instead of "does this edge still hold" would leave
+        edges whose items aged out stranded, and a prune keyed on a computed_at
+        timestamp marker is defeated whenever two runs share the same `now`
+        (as pinned tests deliberately do): a stale, untouched edge is
+        indistinguishable from a freshly-touched one when their computed_at
+        values collide, so the sweep re-checks validity directly instead.
+        """
+        now = now or datetime.now(UTC)
+        window_start = now - timedelta(days=window_days)
+
+        self._execute(
+            """
+            MATCH (t1:Topic)<-[:ABOUT]-(i:Item)-[:ABOUT]->(t2:Topic)
+            WHERE t1.id < t2.id
+            WITH t1, t2, count(i) AS co_occurrences
+            WHERE co_occurrences >= 2
+            WITH t1, t2,
+                 CAST(co_occurrences AS DOUBLE)
+                 / (t1.item_count + t2.item_count - co_occurrences) AS jaccard
+            MERGE (t1)-[r:RELATED_TO]->(t2)
+            SET r.weight = jaccard, r.computed_at = $now
+            """,
+            {"now": now},
+        )
+        self._execute(
+            """
+            MATCH (t1:Topic)-[r:RELATED_TO]->(t2:Topic)
+            OPTIONAL MATCH (t1)<-[:ABOUT]-(i:Item)-[:ABOUT]->(t2)
+            WITH r, count(i) AS co_occurrences
+            WHERE co_occurrences < 2
+            DELETE r
+            """
+        )
+
+        self._execute(
+            """
+            MATCH (i1:Item)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2:Item)
+            WHERE i1.id < i2.id
+              AND i1.published_at >= $window_start AND i2.published_at >= $window_start
+            WITH i1, i2, count(t) AS shared_topics
+            WHERE shared_topics >= 2
+            MATCH (i1)-[:ABOUT]->(t1:Topic)
+            WITH i1, i2, shared_topics, count(t1) AS n1
+            MATCH (i2)-[:ABOUT]->(t2:Topic)
+            WITH i1, i2, shared_topics, n1, count(t2) AS n2
+            WITH i1, i2, CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics) AS jaccard
+            WHERE jaccard > $threshold
+            MERGE (i1)-[r:SIMILAR_TO]->(i2)
+            SET r.score = jaccard, r.computed_at = $now
+            """,
+            {"window_start": window_start, "threshold": score_threshold, "now": now},
+        )
+        self._execute(
+            """
+            MATCH (i1:Item)-[r:SIMILAR_TO]->(i2:Item)
+            OPTIONAL MATCH (i1)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2)
+            WITH r, i1, i2, count(t) AS shared_topics
+            OPTIONAL MATCH (i1)-[:ABOUT]->(t1:Topic)
+            WITH r, i1, i2, shared_topics, count(t1) AS n1
+            OPTIONAL MATCH (i2)-[:ABOUT]->(t2:Topic)
+            WITH r, i1, i2, shared_topics, n1, count(t2) AS n2
+            WITH r, i1, i2, shared_topics,
+                 CASE WHEN (n1 + n2 - shared_topics) > 0
+                      THEN CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics)
+                      ELSE 0.0 END AS jaccard
+            WHERE NOT (
+                shared_topics >= 2
+                AND jaccard > $threshold
+                AND i1.published_at >= $window_start
+                AND i2.published_at >= $window_start
+            )
+            DELETE r
+            """,
+            {"threshold": score_threshold, "window_start": window_start},
+        )
+
+    def get_similar_items(self, item_id: str, limit: int = 20) -> list[dict[str, Any]] | None:
+        rows = _rows(
+            self._execute(
+                """
+                MATCH (i1:Item {id: $item_id})-[r:SIMILAR_TO]-(i2:Item)
+                OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(i2)
+                OPTIONAL MATCH (i1)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2)
+                WITH i2, r, f, collect(DISTINCT t.name) AS shared_topics
+                RETURN i2.id AS id, i2.guid AS guid, i2.url AS url, i2.title AS title,
+                       i2.summary AS summary, i2.author AS author,
+                       i2.word_count AS word_count, i2.published_at AS published_at,
+                       i2.fetched_at AS fetched_at, i2.read AS read, i2.starred AS starred,
+                       f.id AS feed_id, coalesce(f.display_name, f.title) AS feed_title,
+                       r.score AS score, shared_topics
+                ORDER BY r.score DESC LIMIT $limit
+                """,
+                {"item_id": item_id, "limit": limit},
+            )
+        )
+        if not rows:
+            exists = _rows(
+                self._execute("MATCH (i:Item {id: $id}) RETURN i.id AS id", {"id": item_id})
+            )
+            if not exists:
+                return None
+            return []
+        tags_by_guid = self._tags_for_items([r["guid"] for r in rows])
+        for row in rows:
+            row["tags"] = tags_by_guid.get(row["guid"], [])
+        return rows
+
+    def get_adjacent_to_starred(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = _rows(
+            self._execute(
+                """
+                MATCH (starred:Item {starred: true})-[r:SIMILAR_TO]-(candidate:Item)
+                WHERE candidate.read = false AND candidate.starred = false
+                OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(candidate)
+                WITH candidate, f, max(r.score) AS score
+                RETURN candidate.id AS id, candidate.guid AS guid, candidate.url AS url,
+                       candidate.title AS title, candidate.summary AS summary,
+                       candidate.author AS author, candidate.word_count AS word_count,
+                       candidate.published_at AS published_at, candidate.fetched_at AS fetched_at,
+                       candidate.read AS read, candidate.starred AS starred,
+                       f.id AS feed_id, coalesce(f.display_name, f.title) AS feed_title,
+                       score
+                ORDER BY score DESC LIMIT $limit
+                """,
+                {"limit": limit},
+            )
+        )
+        tags_by_guid = self._tags_for_items([r["guid"] for r in rows])
+        for row in rows:
+            row["tags"] = tags_by_guid.get(row["guid"], [])
+        return rows
+
+    def get_author_items(
+        self,
+        author_name: str,
+        cursor_ts: datetime | None = None,
+        cursor_guid: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        cursor_clause = ""
+        params: dict[str, Any] = {"author": author_name, "limit": limit}
+        if cursor_ts is not None and cursor_guid is not None:
+            cursor_clause = (
+                "\nWITH i, f"
+                "\nWHERE (coalesce(i.published_at, i.fetched_at) < $cursor_ts"
+                " OR (coalesce(i.published_at, i.fetched_at) = $cursor_ts"
+                " AND i.guid > $cursor_guid))"
+            )
+            params["cursor_ts"] = cursor_ts
+            params["cursor_guid"] = cursor_guid
+        rows = _rows(
+            self._execute(
+                f"""
+                MATCH (i:Item {{author: $author}})
+                OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(i)
+                {cursor_clause}
+                WITH i, collect(f)[1] AS f
+                RETURN {_ITEM_LIST_COLS}, f.id AS feed_id,
+                       coalesce(f.display_name, f.title) AS feed_title
+                ORDER BY coalesce(i.published_at, i.fetched_at) DESC, i.guid ASC
+                LIMIT $limit
+                """,
+                params,
+            )
+        )
+        tags_by_guid = self._tags_for_items([r["guid"] for r in rows])
+        for row in rows:
+            row["tags"] = tags_by_guid.get(row["guid"], [])
+        return rows
+
+    def get_topic_timeline(self, topic_id: str) -> list[dict[str, Any]] | None:
+        rows = _rows(
+            self._execute(
+                """
+                MATCH (i:Item)-[:ABOUT]->(t:Topic {id: $topic_id})
+                RETURN date_trunc('week', i.published_at) AS week, count(i) AS count
+                ORDER BY week ASC
+                """,
+                {"topic_id": topic_id},
+            )
+        )
+        if not rows:
+            exists = _rows(
+                self._execute("MATCH (t:Topic {id: $id}) RETURN t.id AS id", {"id": topic_id})
+            )
+            if not exists:
+                return None
+            return []
+        return rows
+
+    def get_feed_health(self, now: datetime | None = None) -> list[dict[str, Any]]:
+        now = now or datetime.now(UTC)
+        inactive_cutoff = now - timedelta(days=30)
+        rows = _rows(
+            self._execute(
+                """
+                MATCH (f:Feed)
+                WHERE f.is_active = true
+                  AND (f.consecutive_errors > 10
+                       OR coalesce(f.last_fetched_at, f.subscribed_at) < $inactive_cutoff)
+                RETURN f.id AS id, f.url AS url, f.title AS title,
+                       f.consecutive_errors AS consecutive_errors, f.last_error AS last_error,
+                       f.last_fetched_at AS last_fetched_at, f.subscribed_at AS subscribed_at
+                """,
+                {"inactive_cutoff": inactive_cutoff},
+            )
+        )
+        return rows
+
     def close(self) -> None:
-        self._conn.close()
-        self._db.close()
+        # Acquire the same lock _execute() uses: without it, close() can run
+        # concurrently with an in-flight query on another thread (e.g. the
+        # poller's background recompute via asyncio.to_thread) and destroy the
+        # underlying Kuzu connection out from under it, segfaulting the
+        # process rather than raising a catchable Python exception.
+        with self._conn_lock:
+            self._conn.close()
+            self._db.close()

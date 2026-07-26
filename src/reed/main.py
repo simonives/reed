@@ -17,6 +17,7 @@ from .api.config import router as config_router
 from .api.data import router as data_router
 from .api.errors import register_error_handlers
 from .api.feeds import router as feeds_router
+from .api.graph import router as graph_router
 from .api.items import router as items_router
 from .api.opml import router as opml_router
 from .api.search import router as search_router
@@ -70,6 +71,7 @@ def create_app() -> FastAPI:
     register_error_handlers(app)
 
     app.include_router(feeds_router)
+    app.include_router(graph_router)
     app.include_router(items_router)
     app.include_router(tags_router)
     app.include_router(config_router)

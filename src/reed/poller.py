@@ -12,7 +12,7 @@ from typing import Any
 import feedparser
 import httpx
 
-from .config import effective_config, effective_feed_settings
+from .config import effective_config, effective_feed_settings, get_settings
 from .graph import GraphService, _safe_url
 from .http import http_client, safe_get
 from .reader import extract_article
@@ -35,6 +35,8 @@ class FeedPoller:
         self._running = False
         self._http: httpx.AsyncClient | None = None
         self._extractor = make_extractor()
+        self._last_recompute: datetime | None = None
+        self._recompute_in_progress = False
 
     async def start(self) -> None:
         self._running = True
@@ -55,12 +57,39 @@ class FeedPoller:
                     await asyncio.sleep(_backoff)
                     _backoff = min(_backoff * 2, 300)
                     continue
+                await self._maybe_recompute_edges()
                 await asyncio.sleep(60)
         finally:
             await self._http.aclose()
 
     async def stop(self) -> None:
         self._running = False
+
+    async def _maybe_recompute_edges(self) -> None:
+        config = effective_config(self._graph)
+        interval = timedelta(minutes=get_settings().derived_edge_interval)
+        now = datetime.now(UTC)
+        if self._last_recompute is not None and now < self._last_recompute + interval:
+            return
+        await self.recompute_derived_edges(config)
+
+    async def recompute_derived_edges(self, config: dict[str, Any] | None = None) -> None:
+        """Recompute SIMILAR_TO/RELATED_TO. Public so POST /graph/recompute can
+        trigger it directly, bypassing the interval gate. Re-entrancy guarded so
+        a manual trigger during a scheduled run is a no-op, not queued."""
+        if self._recompute_in_progress:
+            return
+        self._recompute_in_progress = True
+        try:
+            config = config or effective_config(self._graph)
+            await asyncio.to_thread(
+                self._graph.recompute_derived_edges,
+                window_days=int(config["similarity_window_days"]),
+                score_threshold=float(config["similarity_score_threshold"]),
+            )
+            self._last_recompute = datetime.now(UTC)
+        finally:
+            self._recompute_in_progress = False
 
     async def refresh_feed(self, feed: dict[str, Any]) -> None:
         """Poll a single feed immediately (POST /feeds/{id}/refresh)."""

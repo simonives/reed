@@ -507,3 +507,38 @@ class TestColumnNamesAllowlist:
         g = GraphService(str(tmp_path / "g.kuzu"))
         with pytest.raises(ValueError, match="Unknown table"):
             g._column_names("Item') RETURN 1 --")
+
+
+class TestSchemaV7Migration:
+    """Schema v7 adds SIMILAR_TO and RELATED_TO rel tables."""
+
+    def test_fresh_install_has_similar_to_and_related_to_tables(self, tmp_path):
+        from reed.graph import GraphService
+
+        graph = GraphService(str(tmp_path / "fresh.kuzu"))
+        try:
+            tables = graph._table_names()
+            assert "SIMILAR_TO" in tables
+            assert "RELATED_TO" in tables
+        finally:
+            graph.close()
+
+    def test_v6_database_migrates_to_v7(self, tmp_path):
+        from reed.graph import _SCHEMA_VERSION, GraphService
+
+        db_path = str(tmp_path / "v6.kuzu")
+        # Build a v6-shaped DB directly (no SIMILAR_TO/RELATED_TO), stamp schema_version=6
+        graph = GraphService(db_path)
+        graph.set_config_value("schema_version", 6)
+        graph._execute("DROP TABLE IF EXISTS SIMILAR_TO")
+        graph._execute("DROP TABLE IF EXISTS RELATED_TO")
+        graph.close()
+
+        reopened = GraphService(db_path)
+        try:
+            assert reopened.get_config_values()["schema_version"] == _SCHEMA_VERSION
+            tables = reopened._table_names()
+            assert "SIMILAR_TO" in tables
+            assert "RELATED_TO" in tables
+        finally:
+            reopened.close()

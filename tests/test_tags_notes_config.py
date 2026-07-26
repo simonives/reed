@@ -126,6 +126,8 @@ class TestConfig:
             "reading_width": 760,
             "line_height": 1.65,
             "font_family_reading": "system-ui, sans-serif",
+            "similarity_window_days": 90,
+            "similarity_score_threshold": 0.1,
         }
 
     def test_patch_persists(self, authed):
