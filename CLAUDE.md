@@ -16,8 +16,8 @@ Current milestone: **M4 — Graph alive (complete)**.
 | M1 | Walking skeleton | Complete |
 | M2 | Usable reader | Complete |
 | M3 | Migration-ready | Complete |
-| M4 | Graph alive | Complete |
-| M5 | API and integrations complete | Not started |
+| M4 | Graph alive | Complete (derived edges + graph query endpoints deliberately deferred to M5 sub-project 1 — see below) |
+| M5 | API and integrations complete | In progress — specced in full, sub-project 1 partially implemented |
 | M6 | MCP server | Not started |
 | M7 | v1.0.0 | Not started |
 
@@ -29,7 +29,18 @@ M4 phase breakdown:
 | M4-B | Bug-fix sprint — enrichment, dedup, cursor pagination, API hardening | Complete |
 | M4-C | Bug-fix sprint — XSS, async handler completion, restore isolation, export orphans, config nulls, poller resilience | Complete |
 
-Active session plan: none — M4 complete. Next: review open issues, then scope M5. See Expiry for the refresh trigger on this subsection.
+M4-A's design deferred `SIMILAR_TO`/`RELATED_TO` derived-edge computation and the `/graph/*` query endpoints described in `docs/roadmap/milestones.md`'s M4 scope — that work now lives as M5 sub-project 1 (below), not as an M4 gap.
+
+M5 is decomposed into four independently-specced sub-projects (specs and plans on disk at `docs/superpowers/specs/2026-07-24-m5-*-design.md` and `docs/superpowers/plans/2026-07-24-m5-*.md`, gitignored — not in git history, reference locally). All four are fully specced and adversarially reviewed (Gemini 3.1 Pro). Status:
+
+| Sub-project | Scope | Status |
+|---|---|---|
+| 1. Graph query endpoints | Derived-edge recompute job (`SIMILAR_TO`/`RELATED_TO`, schema v7), six `/api/v1/graph/*` endpoints | In progress — Tasks 1-2 (schema v7, `recompute_derived_edges`) committed; Tasks 3-9 (poller wiring, five endpoints, recompute trigger) dispatched to a background agent as of 2026-07-25, check `worktree-m5-graph-query-endpoints` branch for latest |
+| 2. Share sheet | `ShareTarget` node (schema v8), `/share/*` CRUD + delivery (webhook, Raindrop.io), Settings UI + reading-view Share button | Specced, not started |
+| 3. Export/import reshape | Reconcile `/data/*`, `/opml/*` against `api-design.md`'s `/export/*`, `/import/*` shape; `X-Confirm-Destructive` header on restore | Specced, not started |
+| 4. Topics API completion | `/topics/{id}/items`, `/topics/{id}/related`; fixes issue #99 by deletion | Specced, not started — depends on sub-project 1's `RELATED_TO` schema |
+
+Active session plan: continuing M5 sub-project 1 (graph query endpoints) execution against its existing plan. Next after that: sub-projects 2-4 in the order above (already the specced dependency order). See Expiry for the refresh trigger on this subsection.
 
 **Architecture**
 

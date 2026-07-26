@@ -169,6 +169,8 @@ Export an OPML file from Feedly, import it into Reed, and have all feeds subscri
 
 The differentiating layer. This is what makes Reed something other RSS readers are not.
 
+**Note (2026-07-25):** the "Derived edges" and "Graph API endpoints" scope below was deliberately deferred out of M4 during M4-A's design and now lives as M5 sub-project 1 ("Graph query endpoints" — see `CLAUDE.md`'s Current status section and `docs/superpowers/specs/2026-07-24-m5-graph-query-endpoints-design.md`). M4 as actually shipped covers Topic extraction only; treat the two subsections below as historical scope-at-time-of-writing, not a record of what M4 delivered.
+
 ### Scope
 
 **Topic extraction**
