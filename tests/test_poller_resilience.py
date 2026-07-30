@@ -57,6 +57,35 @@ class TestPollerSupervision:
 
         assert call_count >= 2
 
+    async def test_exception_in_recompute_does_not_kill_loop(self, graph):
+        """#160 — a recompute failure must not permanently kill the poller loop."""
+        poller = FeedPoller(graph)
+        poll_count = 0
+        resumed = asyncio.Event()
+
+        async def mock_poll_due():
+            pass
+
+        async def mock_maybe_recompute():
+            nonlocal poll_count
+            poll_count += 1
+            if poll_count == 1:
+                raise RuntimeError("simulated recompute failure")
+            resumed.set()
+
+        poller._poll_due_feeds = mock_poll_due
+        poller._maybe_recompute_edges = mock_maybe_recompute
+
+        with patch("reed.poller.asyncio.sleep", side_effect=_yield_sleep):
+            task = asyncio.create_task(poller.start())
+            await asyncio.wait_for(resumed.wait(), timeout=5.0)
+            await poller.stop()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        assert poll_count >= 2
+
     async def test_backfill_exception_does_not_prevent_polling(self, graph):
         poller = FeedPoller(graph)
         polled = asyncio.Event()

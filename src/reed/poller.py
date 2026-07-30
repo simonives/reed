@@ -57,7 +57,10 @@ class FeedPoller:
                     await asyncio.sleep(_backoff)
                     _backoff = min(_backoff * 2, 300)
                     continue
-                await self._maybe_recompute_edges()
+                try:
+                    await self._maybe_recompute_edges()
+                except Exception:
+                    logger.exception("Derived-edge recompute failed; continuing to poll")
                 await asyncio.sleep(60)
         finally:
             await self._http.aclose()

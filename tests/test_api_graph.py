@@ -211,3 +211,28 @@ class TestGraphRecompute:
         with patch.object(poller, "recompute_derived_edges", new=AsyncMock()):
             r = authed.post("/api/v1/graph/recompute")
         assert r.status_code == 202
+
+    def test_recompute_task_is_not_orphaned(self, authed, reed_client):
+        """#161 — the triggered recompute must be tracked (e.g. via FastAPI's
+        BackgroundTasks), not a bare fire-and-forget asyncio.create_task whose
+        return value is discarded, leaving no strong reference and letting the
+        event loop garbage-collect the task mid-flight. Guards both that the
+        untracked-task mechanism isn't used AND that the recompute is actually
+        invoked — a broken implementation that dropped the call entirely would
+        still pass a create_task-absence check alone."""
+        import asyncio
+        from datetime import UTC, datetime
+        from unittest.mock import AsyncMock, patch
+
+        poller = reed_client.app.state.poller
+        # Prevent the poller's own interval-based recompute from firing during
+        # this test's window, so only the request-triggered call is observed.
+        poller._last_recompute = datetime.now(UTC)
+        with (
+            patch.object(asyncio, "create_task", wraps=asyncio.create_task) as mock_create_task,
+            patch.object(poller, "recompute_derived_edges", new=AsyncMock()) as mock_recompute,
+        ):
+            r = authed.post("/api/v1/graph/recompute")
+        assert r.status_code == 202
+        mock_create_task.assert_not_called()
+        mock_recompute.assert_called_once()

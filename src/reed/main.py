@@ -34,6 +34,14 @@ _poller: FeedPoller | None = None
 _poller_task: asyncio.Task[None] | None = None
 
 
+async def _shutdown_graph(graph: GraphService) -> None:
+    # close() blocks on _conn_lock, a threading.RLock also held (via
+    # asyncio.to_thread) by an in-flight recompute. Calling it directly here
+    # would stall the whole event loop until that lock is free (#162), so run
+    # it off-thread instead.
+    await asyncio.to_thread(graph.close)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _graph, _poller, _poller_task
@@ -56,7 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         with contextlib.suppress(asyncio.CancelledError):
             await _poller_task
     if _graph:
-        _graph.close()
+        await _shutdown_graph(_graph)
     logger.info("Reed stopped")
 
 

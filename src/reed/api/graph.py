@@ -3,11 +3,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 from ..graph import GraphService
 from ..poller import FeedPoller
@@ -117,10 +116,11 @@ def feed_health(graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
 
 
 @router.post("/recompute", status_code=status.HTTP_202_ACCEPTED)
-async def trigger_recompute(poller: FeedPoller = Depends(get_poller)) -> dict[str, Any]:
-    # Handler must be `async def`, not sync: FastAPI runs sync `def` handlers
-    # in a worker thread with no running event loop, so asyncio.create_task
-    # raises "no running event loop" there. As a coroutine this runs on the
-    # main event loop (alongside the poller), where create_task is valid.
-    asyncio.create_task(poller.recompute_derived_edges())
+async def trigger_recompute(
+    background_tasks: BackgroundTasks, poller: FeedPoller = Depends(get_poller)
+) -> dict[str, Any]:
+    # BackgroundTasks (not a bare asyncio.create_task) so the task is held by
+    # Starlette until it completes, rather than being an unreferenced task the
+    # event loop is free to garbage-collect mid-flight (#161).
+    background_tasks.add_task(poller.recompute_derived_edges)
     return envelope({"triggered": True})
