@@ -40,14 +40,16 @@ M5 is decomposed into four independently-specced sub-projects (specs and plans o
 | 3. Export/import reshape | Reconcile `/data/*`, `/opml/*` against `api-design.md`'s `/export/*`, `/import/*` shape; `X-Confirm-Destructive` header on restore | Specced, not started |
 | 4. Topics API completion | `/topics/{id}/items`, `/topics/{id}/related`; fixes issue #99 by deletion | Specced, not started — depends on sub-project 1's `RELATED_TO` schema |
 
-**M6 gate — do not start M6 (MCP server) work until these are resolved.** PR #159's review surfaced two HIGH/MEDIUM-severity defects in the poller/recompute lifecycle that M6's tools (`trigger_recompute` and friends) would otherwise build directly on top of:
-- **#160** (HIGH) — a derived-edge recompute failure permanently kills the background poller (regression against M4-C's poller-resilience work)
-- **#161** (MEDIUM) — `POST /graph/recompute`'s fire-and-forget task can be garbage-collected mid-flight
-- **#162** (MEDIUM) — `GraphService.close()` can block the entire event loop during shutdown if a recompute is mid-flight
+**M6 gate — cleared.** PR #159's review surfaced two HIGH/MEDIUM-severity defects in the poller/recompute lifecycle that M6's tools (`trigger_recompute` and friends) would otherwise build directly on top of. All three were fixed and merged in PR #167 (2026-07-30):
+- **#160** (HIGH, closed) — a derived-edge recompute failure permanently kills the background poller (regression against M4-C's poller-resilience work)
+- **#161** (MEDIUM, closed) — `POST /graph/recompute`'s fire-and-forget task can be garbage-collected mid-flight
+- **#162** (MEDIUM, closed) — `GraphService.close()` can block the entire event loop during shutdown if a recompute is mid-flight
 
-Issues #163-#165 (LOW severity — topic-timeline null bucket, feed-health null-timestamp edge case, duplicated magic number) do not block M6 and can be picked up opportunistically during M5 sub-projects 2-4.
+PR #167's adversarial review (Gemini 3.1 Pro) surfaced a further, pre-existing defect adjacent to this code path — **#168** (bug): `GraphService.recompute_derived_edges` doesn't hold `_conn_lock` across its full multi-statement body, unlike `restore_data`'s established #124 precedent, creating a segfault-risk race if `close()` interleaves mid-recompute. Not a #167 regression (present since PR #159), not gating, but worth fixing before M6 leans on this path further.
 
-Active session plan: M5 sub-project 2 (share sheet) is next per the specced dependency order — but resolve #160-#162 first, before M6, per the gate above. See Expiry for the refresh trigger on this subsection.
+Issues #163-#165 (LOW severity — topic-timeline null bucket, feed-health null-timestamp edge case, duplicated magic number) and #168 do not block M6 and can be picked up opportunistically during M5 sub-projects 2-4 or ahead of M6.
+
+Active session plan: M6 gate is clear — M5 sub-project 2 (share sheet) is next per the specced dependency order, or M6 can now start. Simon's call. See Expiry for the refresh trigger on this subsection.
 
 **Architecture**
 
@@ -203,6 +205,6 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
 
 ## Expiry
 
-- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-07-25, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
+- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-07-30, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
 - Pinned model versions (Sonnet 4.6, Opus 4.8, Gemini 3.1 Pro (High)) — owner: Simon, last-verified: 2026-07-25, refresh interval: whenever a named model is superseded or Simon changes routing.
 - Issue #31 reference (primary-key won't-fix) — stable design decision, not perishable; no refresh trigger.
