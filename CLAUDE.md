@@ -36,9 +36,11 @@ M5 is decomposed into four independently-specced sub-projects (specs and plans o
 | Sub-project | Scope | Status |
 |---|---|---|
 | 1. Graph query endpoints | Derived-edge recompute job (`SIMILAR_TO`/`RELATED_TO`, schema v7), six `/api/v1/graph/*` endpoints | **Complete and merged** (PR #159, 2026-07-26) |
-| 2. Share sheet | `ShareTarget` node (schema v8), `/share/*` CRUD + delivery (webhook, Raindrop.io), Settings UI + reading-view Share button | Specced, not started |
+| 2. Share sheet | `ShareTarget` node (schema v8), `/share/*` CRUD + delivery (webhook, Raindrop.io), Settings UI + reading-view Share button | **Complete and merged** (PR #171, 2026-08-04) |
 | 3. Export/import reshape | Reconcile `/data/*`, `/opml/*` against `api-design.md`'s `/export/*`, `/import/*` shape; `X-Confirm-Destructive` header on restore | Specced, not started |
 | 4. Topics API completion | `/topics/{id}/items`, `/topics/{id}/related`; fixes issue #99 by deletion | Specced, not started — depends on sub-project 1's `RELATED_TO` schema |
+
+PR #171's `/code-review` (Opus) surfaced four issues fixed before merge (clipboard failures on non-secure origins going unhandled, `_classify_response` crashing on non-dict JSON error bodies, `GET /share/targets` returning secrets in plaintext for no client benefit, and a delete-protection bypass via creating new copy-type targets) plus three deferred as fast-follow issues: **#172** (Raindrop `collection_id` sent as string, API expects numeric), **#173** (Settings enabled-checkbox can visually desync from store state on a failed toggle), **#174** (share-target config validation discards the Pydantic-coerced model, raw dict persisted instead).
 
 **M6 gate — cleared.** PR #159's review surfaced two HIGH/MEDIUM-severity defects in the poller/recompute lifecycle that M6's tools (`trigger_recompute` and friends) would otherwise build directly on top of. All three were fixed and merged in PR #167 (2026-07-30):
 - **#160** (HIGH, closed) — a derived-edge recompute failure permanently kills the background poller (regression against M4-C's poller-resilience work)
@@ -49,7 +51,7 @@ PR #167's adversarial review (Gemini 3.1 Pro) surfaced a further, pre-existing d
 
 Issues #163-#165 (LOW severity — topic-timeline null bucket, feed-health null-timestamp edge case, duplicated magic number) and #168 do not block M6 and can be picked up opportunistically during M5 sub-projects 2-4 or ahead of M6.
 
-Active session plan: M6 gate is clear — M5 sub-project 2 (share sheet) is next per the specced dependency order, or M6 can now start. Simon's call. See Expiry for the refresh trigger on this subsection.
+Active session plan: M5 sub-project 2 is merged. Next per the specced dependency order is M5 sub-project 3 (export/import reshape) or sub-project 4 (topics API completion) — both fully specced on disk. M6 is also unblocked and available as an alternative. Simon's call. See Expiry for the refresh trigger on this subsection.
 
 **Architecture**
 
@@ -205,6 +207,6 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
 
 ## Expiry
 
-- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-07-30, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
+- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-08-04, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
 - Pinned model versions (Sonnet 4.6, Opus 4.8, Gemini 3.1 Pro (High)) — owner: Simon, last-verified: 2026-07-25, refresh interval: whenever a named model is superseded or Simon changes routing.
 - Issue #31 reference (primary-key won't-fix) — stable design decision, not perishable; no refresh trigger.
