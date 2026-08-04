@@ -21,6 +21,7 @@ from .api.graph import router as graph_router
 from .api.items import router as items_router
 from .api.opml import router as opml_router
 from .api.search import router as search_router
+from .api.share import router as share_router
 from .api.tags import router as tags_router
 from .api.topics import router as topics_router
 from .config import get_settings
@@ -87,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(search_router)
     app.include_router(data_router)
     app.include_router(topics_router)
+    app.include_router(share_router)
 
     frontend_dist = Path(get_settings().frontend_path)
     if frontend_dist.exists():

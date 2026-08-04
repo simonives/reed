@@ -20,7 +20,7 @@ from .http import safe_url as _safe_url
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 
 # Config keys writable via PATCH /config and safe to restore from backup.
 # schema_version is managed separately and excluded intentionally.
@@ -136,6 +136,7 @@ class GraphService:
             self._execute("ALTER TABLE Note RENAME TO _NoteLegacy")
         self._init_schema()
         if fresh:
+            self._seed_default_share_targets()
             self.set_config_value("schema_version", _SCHEMA_VERSION)
             logger.debug("Fresh schema initialised at version %d", _SCHEMA_VERSION)
             return
@@ -228,6 +229,17 @@ class GraphService:
             "CREATE REL TABLE IF NOT EXISTS RELATED_TO"
             "(FROM Topic TO Topic, weight DOUBLE, computed_at TIMESTAMP)"
         )
+        self._execute("""
+            CREATE NODE TABLE IF NOT EXISTS ShareTarget(
+                id STRING,
+                type STRING,
+                name STRING,
+                enabled BOOLEAN DEFAULT true,
+                config STRING,
+                created_at TIMESTAMP,
+                PRIMARY KEY (id)
+            )
+        """)
         # FTS index — CREATE_FTS_INDEX has no IF NOT EXISTS so we suppress errors.
         # On existing v3 DBs the column doesn't exist yet; _migrate_to_v4 creates it.
         _fts_cypher = (
@@ -263,6 +275,7 @@ class GraphService:
             (5, self._migrate_to_v5),
             (6, self._migrate_to_v6),
             (7, self._migrate_to_v7),
+            (8, self._migrate_to_v8),
         ]
         for target, run in migrations:
             if target > stored:
@@ -386,6 +399,32 @@ class GraphService:
         # SIMILAR_TO and RELATED_TO rel tables are created by _init_schema
         # (IF NOT EXISTS). Mirrors how _migrate_to_v5 handled Topic/ABOUT.
         pass
+
+    def _migrate_to_v8(self) -> None:
+        self._seed_default_share_targets()
+
+    def _seed_default_share_targets(self) -> None:
+        defaults = [
+            {"type": "copy_link", "name": "Copy link", "enabled": True, "config": "{}"},
+            {"type": "copy_markdown", "name": "Copy as Markdown", "enabled": True, "config": "{}"},
+        ]
+        for d in defaults:
+            self._execute(
+                """
+                CREATE (s:ShareTarget {
+                    id: $id, type: $type, name: $name, enabled: $enabled,
+                    config: $config, created_at: $created_at
+                })
+                """,
+                {
+                    "id": str(uuid.uuid4()),
+                    "type": d["type"],
+                    "name": d["name"],
+                    "enabled": d["enabled"],
+                    "config": d["config"],
+                    "created_at": datetime.now(UTC),
+                },
+            )
 
     def _exists(self, query: str, params: dict[str, Any]) -> bool:
         rows = _rows(self._execute(query, params))
@@ -882,7 +921,7 @@ class GraphService:
             MATCH (i:Item)
             WHERE i.id = $id
             OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(i)
-            RETURN {_ITEM_COLS}, f.id AS feed_id,
+            RETURN {_ITEM_COLS}, f.id AS feed_id, f.url AS feed_url,
                    coalesce(f.display_name, f.title) AS feed_title
             LIMIT 1
             """,
@@ -983,6 +1022,84 @@ class GraphService:
         if self.get_tag(tag_id) is None:
             return False
         self._execute("MATCH (t:Tag) WHERE t.id = $id DETACH DELETE t", {"id": tag_id})
+        return True
+
+    # --- Share targets ---
+
+    def list_share_targets(self) -> list[dict[str, Any]]:
+        rows = _rows(
+            self._execute(
+                "MATCH (s:ShareTarget) "
+                "RETURN s.id AS id, s.type AS type, s.name AS name, "
+                "s.enabled AS enabled, s.config AS config "
+                "ORDER BY s.created_at ASC"
+            )
+        )
+        for r in rows:
+            r["config"] = json.loads(r["config"]) if r["config"] else {}
+        return rows
+
+    def get_share_target(self, target_id: str) -> dict[str, Any] | None:
+        rows = _rows(
+            self._execute(
+                "MATCH (s:ShareTarget) WHERE s.id = $id "
+                "RETURN s.id AS id, s.type AS type, s.name AS name, "
+                "s.enabled AS enabled, s.config AS config",
+                {"id": target_id},
+            )
+        )
+        if not rows:
+            return None
+        target = rows[0]
+        target["config"] = json.loads(target["config"]) if target["config"] else {}
+        return target
+
+    def create_share_target(self, type: str, name: str, config: dict[str, Any]) -> dict[str, Any]:
+        target_id = str(uuid.uuid4())
+        self._execute(
+            """
+            CREATE (s:ShareTarget {
+                id: $id, type: $type, name: $name, enabled: true,
+                config: $config, created_at: $created_at
+            })
+            """,
+            {
+                "id": target_id,
+                "type": type,
+                "name": name,
+                "config": json.dumps(config),
+                "created_at": datetime.now(UTC),
+            },
+        )
+        result = self.get_share_target(target_id)
+        assert result is not None
+        return result
+
+    def update_share_target(self, target_id: str, **fields: Any) -> dict[str, Any] | None:
+        if self.get_share_target(target_id) is None:
+            return None
+        sets = []
+        params: dict[str, Any] = {"id": target_id}
+        if "name" in fields:
+            sets.append("s.name = $name")
+            params["name"] = fields["name"]
+        if "enabled" in fields:
+            sets.append("s.enabled = $enabled")
+            params["enabled"] = fields["enabled"]
+        if "config" in fields:
+            sets.append("s.config = $config")
+            params["config"] = json.dumps(fields["config"])
+        if sets:
+            self._execute(
+                f"MATCH (s:ShareTarget) WHERE s.id = $id SET {', '.join(sets)}",
+                params,
+            )
+        return self.get_share_target(target_id)
+
+    def delete_share_target(self, target_id: str) -> bool:
+        if self.get_share_target(target_id) is None:
+            return False
+        self._execute("MATCH (s:ShareTarget) WHERE s.id = $id DETACH DELETE s", {"id": target_id})
         return True
 
     def tag_item(self, item_id: str, name: str) -> dict[str, Any] | None:

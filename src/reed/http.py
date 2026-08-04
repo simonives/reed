@@ -242,3 +242,29 @@ async def safe_get(
         # Resolve relative redirects against the current URL, then re-validate
         current = current.join(location)
     raise UnsafeURLError("Too many redirects")
+
+
+async def safe_post(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    json: dict[str, Any],
+    headers: dict[str, str] | None = None,
+    timeout: float = 10.0,
+) -> httpx.Response:
+    """POST to a URL from an untrusted destination, blocking SSRF to internal hosts.
+
+    Unlike safe_get, this makes exactly one request and does not follow
+    redirects: automatically re-POSTing a credential-bearing request across a
+    redirect hop risks leaking Authorization/signing headers to an unintended
+    origin, and 301/302/303 redirects require a method downgrade to GET that a
+    blind retry would violate. Neither Raindrop's API nor a well-behaved
+    webhook receiver has a legitimate reason to redirect a share POST, so the
+    caller is expected to treat a 3xx response the same as any other
+    non-success status.
+    """
+    target = httpx.URL(url)
+    await _require_safe_url(target)
+    return await client.post(
+        target, json=json, headers=headers, follow_redirects=False, timeout=timeout
+    )

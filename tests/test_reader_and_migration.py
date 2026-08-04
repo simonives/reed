@@ -22,6 +22,7 @@ from reed.http import (
     _resolve_safe_ips,
     http_client,
     safe_get,
+    safe_post,
 )
 
 
@@ -137,6 +138,61 @@ class TestSSRFGuard:
 
         result = await extract_article("http://169.254.169.254/", http=AsyncMock())
         assert result is None
+
+
+class TestSafePost:
+    async def test_rejects_loopback(self):
+        with pytest.raises(UnsafeURLError):
+            await safe_post(AsyncMock(), "http://127.0.0.1/admin", json={})
+
+    async def test_rejects_private_range(self):
+        with pytest.raises(UnsafeURLError):
+            await safe_post(AsyncMock(), "http://192.168.1.1/", json={})
+
+    async def test_rejects_non_http_scheme(self):
+        with pytest.raises(UnsafeURLError):
+            await safe_post(AsyncMock(), "file:///etc/passwd", json={})
+
+    async def test_allows_public_host_and_passes_json_and_headers(self):
+        ok = httpx.Response(200, request=httpx.Request("POST", "https://example.com/"))
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=ok)
+        with patch("reed.http._resolve_safe_ips", AsyncMock(return_value=["93.184.216.34"])):
+            response = await safe_post(
+                client, "https://example.com/", json={"a": 1}, headers={"X-Test": "1"}
+            )
+        assert response.status_code == 200
+        client.post.assert_awaited_once()
+        _, kwargs = client.post.call_args
+        assert kwargs["json"] == {"a": 1}
+        assert kwargs["headers"] == {"X-Test": "1"}
+        assert kwargs["follow_redirects"] is False
+        assert kwargs["timeout"] == 10.0
+
+    async def test_does_not_follow_redirects(self):
+        """A 3xx from the target is returned as-is, not chased — the caller
+        decides how to treat it (Task 6 treats it as a delivery failure).
+        Only one request is made, regardless of the Location header."""
+        redirect = httpx.Response(
+            302,
+            headers={"Location": "https://attacker.example/steal"},
+            request=httpx.Request("POST", "https://example.com/"),
+        )
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=redirect)
+        with patch("reed.http._resolve_safe_ips", AsyncMock(return_value=["93.184.216.34"])):
+            response = await safe_post(client, "https://example.com/", json={"a": 1})
+        assert response.status_code == 302
+        client.post.assert_awaited_once()
+
+    async def test_custom_timeout_is_passed_through(self):
+        ok = httpx.Response(200, request=httpx.Request("POST", "https://example.com/"))
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=ok)
+        with patch("reed.http._resolve_safe_ips", AsyncMock(return_value=["93.184.216.34"])):
+            await safe_post(client, "https://example.com/", json={}, timeout=3.0)
+        _, kwargs = client.post.call_args
+        assert kwargs["timeout"] == 3.0
 
 
 class TestPinnedResolver:

@@ -1,11 +1,12 @@
 import { setActivePinia, createPinia } from 'pinia'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsPanel from './SettingsPanel.vue'
 import { useConfigStore } from '../stores/config'
 import { useUiStore } from '../stores/ui'
 import { useOpmlStore } from '../stores/opml'
 import { useFeedsStore } from '../stores/feeds'
+import { useShareStore } from '../stores/share'
 
 describe('SettingsPanel', () => {
   beforeEach(() => setActivePinia(createPinia()))
@@ -129,5 +130,81 @@ describe('SettingsPanel — Import/Export tab', () => {
     await wrapper.findAll('.tabs button').find((t) => t.text() === 'Import / Export').trigger('click')
     await wrapper.find('[data-testid="export-btn"]').trigger('click')
     expect(opml.exportFeeds).toHaveBeenCalled()
+  })
+})
+
+describe('SettingsPanel — Share tab', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('renders the Share tab with configured targets', async () => {
+    const share = useShareStore()
+    share.loaded = true
+    share.targets = [
+      { id: 't1', type: 'webhook', name: 'My webhook', enabled: true, config: { url: 'https://x.com/hook' } },
+    ]
+    const wrapper = mount(SettingsPanel)
+    await wrapper.findAll('.tabs button').find((t) => t.text() === 'Share').trigger('click')
+
+    const text = wrapper.text()
+    expect(text).toContain('My webhook')
+    expect(wrapper.find('.badge--type').text()).toBe('webhook')
+  })
+
+  it('submitting the add-target form calls shareStore.create with the right args', async () => {
+    const share = useShareStore()
+    share.loaded = true
+    share.targets = []
+    share.create = vi.fn().mockResolvedValue({ id: 't2', type: 'webhook', name: 'W', enabled: true, config: {} })
+
+    const wrapper = mount(SettingsPanel)
+    await wrapper.findAll('.tabs button').find((t) => t.text() === 'Share').trigger('click')
+
+    await wrapper.find('[data-testid="new-target-type"]').setValue('webhook')
+    await wrapper.find('[data-testid="new-target-name"]').setValue('W')
+    await wrapper.find('[data-testid="new-target-url"]').setValue('https://x.com/hook')
+    await wrapper.find('[data-testid="add-target-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(share.create).toHaveBeenCalledWith('webhook', 'W', { url: 'https://x.com/hook' })
+  })
+
+  it('clicking delete on a target calls shareStore.remove', async () => {
+    const share = useShareStore()
+    share.loaded = true
+    share.targets = [
+      { id: 't1', type: 'webhook', name: 'My webhook', enabled: true, config: { url: 'https://x.com/hook' } },
+    ]
+    share.remove = vi.fn().mockResolvedValue()
+
+    const wrapper = mount(SettingsPanel)
+    await wrapper.findAll('.tabs button').find((t) => t.text() === 'Share').trigger('click')
+    await wrapper.find('[data-testid="delete-target-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(share.remove).toHaveBeenCalledWith('t1')
+  })
+
+  it('shows share.error in the DOM when deleting a seeded target is rejected', async () => {
+    const share = useShareStore()
+    share.loaded = true
+    share.targets = [
+      { id: 't1', type: 'copy_link', name: 'Copy link', enabled: true, config: {} },
+    ]
+    // Mirrors the real store behaviour for a 409 on a seeded, non-deletable target.
+    share.remove = vi.fn().mockImplementation(async () => {
+      share.error = 'Could not delete share target.'
+      throw new Error('Could not delete share target.')
+    })
+
+    const wrapper = mount(SettingsPanel)
+    await wrapper.findAll('.tabs button').find((t) => t.text() === 'Share').trigger('click')
+    await wrapper.find('[data-testid="delete-target-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(share.remove).toHaveBeenCalledWith('t1')
+    expect(wrapper.text()).toContain('Could not delete share target.')
+    // The target must remain — the store's own catch is responsible for not
+    // mutating `targets` on failure; this asserts the UI still reflects that.
+    expect(wrapper.findAll('.target-row')).toHaveLength(1)
   })
 })

@@ -54,6 +54,22 @@
         >
           {{ extracting ? 'Extracting…' : 'Reader view' }}
         </button>
+        <div class="share-wrap">
+          <button
+            class="btn"
+            data-test="share-toggle"
+            :disabled="!share.loaded && share.loading"
+            @click="shareOpen = !shareOpen"
+          >
+            Share
+          </button>
+          <ul v-if="shareOpen" class="share-popover" role="menu">
+            <li v-for="target in enabledShareTargets" :key="target.id">
+              <button type="button" data-test="share-target" @click="onShareTo(target)">{{ target.name }}</button>
+            </li>
+          </ul>
+          <p v-if="shareMessage" class="share-toast" role="status">{{ shareMessage }}</p>
+        </div>
       </div>
 
       <p v-if="extractError" class="article__error" role="alert">{{ extractError }}</p>
@@ -80,12 +96,17 @@ import { computed, ref, watch } from 'vue'
 import ArticleBody from './ArticleBody.vue'
 import { useConfigStore } from '../stores/config'
 import { useItemsStore } from '../stores/items'
+import { useShareStore } from '../stores/share'
 import { formatDateTime } from '../lib/format'
 import { pageDownScroll } from '../lib/scroll'
 import { safeHref } from '../lib/url'
 
 const items = useItemsStore()
 const config = useConfigStore()
+const share = useShareStore()
+// ReadingPane mounts once for the app's lifetime (like SettingsPanel's
+// eager stores), so a plain setup-time call is equivalent to onMounted here.
+share.ensureLoaded().catch(() => {})
 
 const scrollEl = ref(null)
 const showReader = ref(true)
@@ -105,6 +126,10 @@ const readingTime = computed(() => {
   if (!words) return ''
   return `${Math.max(1, Math.round(words / 200))} min read`
 })
+
+const shareOpen = ref(false)
+const shareMessage = ref('')
+const enabledShareTargets = computed(() => share.targets.filter((t) => t.enabled))
 
 const canToggleReader = computed(() => !!detail.value?.reader_content)
 const canExtract = computed(
@@ -177,6 +202,33 @@ async function extract() {
   } finally {
     extracting.value = false
   }
+}
+
+async function onShareTo(target) {
+  shareOpen.value = false
+  const d = detail.value
+  if (!d) return
+  if (target.type === 'copy_link' || target.type === 'copy_markdown') {
+    const text = target.type === 'copy_link' ? d.url : `[${d.title}](${d.url})`
+    try {
+      await navigator.clipboard.writeText(text)
+      shareMessage.value = 'Copied'
+    } catch {
+      // navigator.clipboard is undefined/rejects in a non-secure context
+      // (e.g. plain HTTP on a LAN address, common for self-hosted Reed).
+      shareMessage.value = 'Could not copy to clipboard'
+    }
+  } else {
+    try {
+      await share.share(d.id, target.id)
+      shareMessage.value = 'Shared'
+    } catch (err) {
+      shareMessage.value = err.message || 'Share failed'
+    }
+  }
+  setTimeout(() => {
+    shareMessage.value = ''
+  }, 2000)
 }
 
 // Space paging: scroll the article; true once at the bottom so App advances.
@@ -272,4 +324,59 @@ defineExpose({ pageDown })
 .article__tag-add input { border: none; background: transparent; font-size: var(--font-size-xs); width: 6rem; }
 .article__note-head { display: flex; justify-content: space-between; align-items: center; }
 .article__note textarea { width: 100%; margin: var(--space-2) 0; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); font: inherit; }
+
+.share-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.share-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  margin-top: var(--space-1);
+  padding: var(--space-1);
+  min-width: 10rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  list-style: none;
+}
+
+.share-popover li + li {
+  margin-top: var(--space-1);
+}
+
+.share-popover button {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  font: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.share-popover button:hover {
+  background: var(--bg-subtle);
+}
+
+.share-toast {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
 </style>

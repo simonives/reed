@@ -10,6 +10,7 @@
         <button :class="{ 'tab--active': tab === 'reading' }" @click="tab = 'reading'">Reading</button>
         <button :class="{ 'tab--active': tab === 'appearance' }" @click="tab = 'appearance'">Appearance</button>
         <button :class="{ 'tab--active': tab === 'import-export' }" @click="tab = 'import-export'">Import / Export</button>
+        <button :class="{ 'tab--active': tab === 'share' }" @click="tab = 'share'">Share</button>
       </nav>
 
       <form @submit.prevent="onSave">
@@ -196,6 +197,68 @@
           </div>
         </div>
 
+        <div v-show="tab === 'share'" class="fields share">
+          <div class="ie-section">
+            <h3>Share targets</h3>
+            <p class="ie-hint">Destinations items can be shared to from the reading view.</p>
+
+            <ul v-if="share.targets.length > 0" class="target-list">
+              <li v-for="target in share.targets" :key="target.id" class="target-row">
+                <span class="target-name">{{ target.name }}</span>
+                <span class="badge badge--type">{{ target.type }}</span>
+                <label class="check target-toggle">
+                  <input
+                    type="checkbox"
+                    :checked="target.enabled"
+                    @change="onToggleEnabled(target)"
+                  /> Enabled
+                </label>
+                <button
+                  type="button"
+                  class="btn btn--danger"
+                  data-testid="delete-target-btn"
+                  @click="onDeleteTarget(target)"
+                >Delete</button>
+              </li>
+            </ul>
+            <p v-else class="ie-hint">No share targets configured yet.</p>
+
+            <p v-if="share.error" class="error" role="alert">{{ share.error }}</p>
+          </div>
+
+          <div class="ie-section">
+            <h3>Add target</h3>
+            <label>Type
+              <select v-model="newTargetType" data-testid="new-target-type">
+                <option value="webhook">Webhook</option>
+                <option value="raindrop">Raindrop.io</option>
+              </select>
+            </label>
+            <label>Name
+              <input v-model="newTargetName" type="text" data-testid="new-target-name" />
+            </label>
+            <label v-if="newTargetType === 'webhook'">URL
+              <input v-model="newTargetUrl" type="url" data-testid="new-target-url" />
+            </label>
+            <template v-else>
+              <label>Token
+                <input v-model="newTargetToken" type="text" data-testid="new-target-token" />
+              </label>
+              <label>Collection ID
+                <input v-model="newTargetCollectionId" type="text" data-testid="new-target-collection-id" />
+              </label>
+            </template>
+            <div class="ie-actions">
+              <button
+                type="button"
+                class="btn btn--primary"
+                data-testid="add-target-btn"
+                @click="onCreateTarget"
+              >Add target</button>
+            </div>
+          </div>
+        </div>
+
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <footer class="panel__foot">
           <button type="button" class="btn" @click="close">Cancel</button>
@@ -215,6 +278,7 @@ import { useFeedsStore } from '../stores/feeds'
 import { useOpmlStore } from '../stores/opml'
 import { useUiStore } from '../stores/ui'
 import { useDataStore } from '../stores/data'
+import { useShareStore } from '../stores/share'
 
 // The `value` stacks must match the backend allowlist exactly — the canonical
 // source is FONT_FAMILY_STACKS in src/reed/config.py; a mismatch means a 400 on save.
@@ -235,12 +299,26 @@ const ui = useUiStore()
 const opml = useOpmlStore()
 const feeds = useFeedsStore()
 const data = useDataStore()
+const share = useShareStore()
 
 const tab = ref('reading')
 const saving = ref(false)
 const error = ref('')
 const restoreFile = ref(null)
 const restoreConfirm = ref('')
+const newTargetType = ref('webhook')
+const newTargetName = ref('')
+const newTargetUrl = ref('')
+const newTargetToken = ref('')
+const newTargetCollectionId = ref('')
+
+// Lazily fetch share targets the first time the Share tab is opened, mirroring
+// how the other tabs only fetch data in response to a user action (this panel
+// has no eager onMounted load elsewhere — config/feeds are loaded by App.vue).
+// Fire-and-forget: failures surface via the reactive share.error binding.
+watch(tab, (t) => {
+  if (t === 'share') share.ensureLoaded().catch(() => {})
+})
 // Draft seeded from current config; only the diff is saved.
 const draft = reactive(Object.fromEntries(EDITABLE.map((k) => [k, config.values[k]])))
 
@@ -338,6 +416,42 @@ function reloadPage() {
   window.location.reload()
 }
 
+// The store already records failures on share.error (rendered in the template
+// below) and re-throws so callers can react — these handlers have nothing
+// further to do with the rejection, so they just swallow it here to avoid an
+// unhandled-rejection console error alongside the correct UI feedback.
+async function onCreateTarget() {
+  const config =
+    newTargetType.value === 'webhook'
+      ? { url: newTargetUrl.value }
+      : { token: newTargetToken.value, collection_id: newTargetCollectionId.value }
+  try {
+    await share.create(newTargetType.value, newTargetName.value, config)
+    newTargetName.value = ''
+    newTargetUrl.value = ''
+    newTargetToken.value = ''
+    newTargetCollectionId.value = ''
+  } catch {
+    // share.error already holds the message; nothing further to do here.
+  }
+}
+
+async function onToggleEnabled(target) {
+  try {
+    await share.update(target.id, { enabled: !target.enabled })
+  } catch {
+    // share.error already holds the message; nothing further to do here.
+  }
+}
+
+async function onDeleteTarget(target) {
+  try {
+    await share.remove(target.id)
+  } catch {
+    // share.error already holds the message; nothing further to do here.
+  }
+}
+
 function close() {
   ui.showSettings = false
 }
@@ -404,4 +518,10 @@ async function onSave() {
 .restore-result { font-size: var(--font-size-sm); display: flex; flex-direction: column; gap: var(--space-2); }
 .btn--danger { background: var(--color-danger); color: #fff; border: none; }
 .btn--danger:disabled { opacity: 0.4; cursor: not-allowed; }
+.share { gap: var(--space-6); }
+.target-list { display: flex; flex-direction: column; gap: var(--space-2); list-style: none; padding: 0; }
+.target-row { display: flex; align-items: center; gap: var(--space-3); font-size: var(--font-size-sm); }
+.target-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge--type { background: var(--bg-hover); color: var(--text-muted); text-transform: capitalize; }
+.target-toggle { flex-direction: row; align-items: center; gap: var(--space-1); }
 </style>

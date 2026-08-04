@@ -520,3 +520,14 @@ class TestRestoreTransactionIsolation:
             )
         finally:
             gs.close()
+
+
+class TestShareTargetExportExclusion:
+    def test_share_targets_absent_from_export(self, graph_with_data):
+        graph_with_data.create_share_target(
+            "webhook", "Secret hook", {"url": "https://x.com", "token": "super-secret-token"}
+        )
+        backup = graph_with_data.export_data()
+        serialized = str(backup)
+        assert "super-secret-token" not in serialized
+        assert "share" not in serialized.lower()
