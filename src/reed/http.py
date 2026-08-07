@@ -41,7 +41,7 @@ def safe_url(url: str) -> str:
     """
     try:
         scheme = httpx.URL(url).scheme
-    except httpx.InvalidURL:
+    except (httpx.InvalidURL, TypeError):
         return ""
     return url if scheme in SAFE_URL_SCHEMES else ""
 

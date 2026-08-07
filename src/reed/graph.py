@@ -1181,7 +1181,7 @@ class GraphService:
 
     # --- Data portability ---
 
-    def export_data(self) -> dict[str, Any]:
+    def export_data(self, *, include_config: bool = True) -> dict[str, Any]:
         """Return a full backup dict (version 1 format). Excludes schema_version from config."""
         feeds_raw = self.list_feeds()
         feeds = [
@@ -1277,7 +1277,7 @@ class GraphService:
             for r in about_rows
         ]
 
-        return {
+        result = {
             "version": 1,
             "exported_at": datetime.now(UTC).isoformat(),
             "feeds": feeds,
@@ -1286,8 +1286,10 @@ class GraphService:
             "tags": tags,
             "topics": topics_export,
             "about_edges": about_export,
-            "config": config,
         }
+        if include_config:
+            result["config"] = config
+        return result
 
     def restore_data(self, backup: dict[str, Any]) -> dict[str, Any]:
         """Clear all data and re-insert from backup. Schema is never touched.

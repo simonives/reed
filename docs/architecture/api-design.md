@@ -366,7 +366,9 @@ Built-in share target types: `copy_link`, `copy_markdown`, `webhook`, `raindrop`
 | `/export/json` | Feeds + items metadata + read/starred state + notes + tags | Personal data portability, archival |
 | `/export/backup` | Complete instance state in portable JSON format | Instance migration (export from old server, import to new) |
 
-Large exports (`/export/json`, `/export/backup`) are generated asynchronously. The endpoint returns `202 Accepted` with a job ID. The client polls `GET /export/jobs/{id}` for completion and a download URL.
+All `/export/*` endpoints are synchronous — a request returns the completed export directly, consistent with every other endpoint in this API.
+
+The only structural difference between `/export/json` and `/export/backup` is the presence of the `config` key: a backup includes the complete global config object, while a personal data export omits it. Consequently, a `/export/json` output **can** be restored via `/import/backup` — the `config` key is optional on restore, and a missing key means no config values are restored, so the instance's config resets to its defaults (`CONFIG_DEFAULTS`/environment settings) rather than the restore failing.
 
 **Backup import** (`POST /import/backup`) is destructive — it replaces the current instance state. The endpoint requires a confirmation header (`X-Confirm-Destructive: true`) to prevent accidental data loss.
 

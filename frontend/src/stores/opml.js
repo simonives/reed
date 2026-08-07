@@ -17,7 +17,7 @@ export const useOpmlStore = defineStore('opml', () => {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const { data } = await api.post('/opml/preview', formData)
+      const { data } = await api.post('/import/opml/preview', formData)
       previewData.value = data
     } catch (err) {
       error.value = err.message || 'Could not parse OPML file.'
@@ -31,7 +31,7 @@ export const useOpmlStore = defineStore('opml', () => {
     loading.value = true
     error.value = ''
     try {
-      const { data } = await api.post('/opml/import', { feeds: selection })
+      const { data } = await api.post('/import/opml', { feeds: selection })
       importResult.value = data
       return data
     } catch (err) {
@@ -46,7 +46,7 @@ export const useOpmlStore = defineStore('opml', () => {
     loading.value = true
     error.value = ''
     try {
-      await _downloadBlob('/api/v1/opml/export', 'reed-feeds.opml')
+      await _downloadBlob('/api/v1/export/opml', 'reed-feeds.opml')
     } catch (err) {
       error.value = err.message || 'Export failed.'
       throw err

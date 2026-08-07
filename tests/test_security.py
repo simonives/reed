@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from reed.graph import GraphService
+from reed.http import safe_url
 
 
 @pytest.fixture
@@ -71,8 +72,41 @@ class TestSafeUrlIngestion:
         assert feeds[0]["site_url"] == "https://example.com"
 
 
+class TestSafeUrlNonStringInput:
+    """#154 — safe_url must not raise TypeError on non-string input."""
+
+    def test_safe_url_returns_empty_for_int(self):
+        assert safe_url(123) == ""
+
+    def test_safe_url_returns_empty_for_none(self):
+        assert safe_url(None) == ""
+
+
 class TestRestoreDataSafeUrl:
     """#121 — javascript: URIs in backup must be stripped on restore."""
+
+    def test_restore_does_not_crash_on_non_string_site_url(self, gs):
+        """#154 — a malformed backup with a non-string site_url must not
+        crash restore_data with an uncaught TypeError."""
+        backup = {
+            "feeds": [
+                {
+                    "url": "https://example.com/feed",
+                    "id": "f1",
+                    "title": "Feed",
+                    "description": "",
+                    "site_url": 123,
+                    "subscribed_at": "2026-01-01T00:00:00+00:00",
+                }
+            ],
+            "items": [],
+            "tags": [],
+            "notes": [],
+            "config": {},
+        }
+        gs.restore_data(backup)
+        feeds = gs.list_feeds()
+        assert feeds[0]["site_url"] == ""
 
     def test_restore_strips_javascript_item_url(self, gs):
         backup = {

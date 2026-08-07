@@ -28,7 +28,20 @@ export const useDataStore = defineStore('data', () => {
     loading.value = true
     error.value = ''
     try {
-      await _downloadBlob('/api/v1/data/export', 'reed-backup.json')
+      await _downloadBlob('/api/v1/export/backup', 'reed-backup.json')
+    } catch (err) {
+      error.value = err.message || 'Export failed.'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function exportJson() {
+    loading.value = true
+    error.value = ''
+    try {
+      await _downloadBlob('/api/v1/export/json', 'reed-export.json')
     } catch (err) {
       error.value = err.message || 'Export failed.'
       throw err
@@ -43,7 +56,9 @@ export const useDataStore = defineStore('data', () => {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const { data } = await api.post('/data/restore', formData)
+      const { data } = await api.post('/import/backup', formData, {
+        headers: { 'X-Confirm-Destructive': 'true' },
+      })
       restoreResult.value = data
       return data
     } catch (err) {
@@ -59,5 +74,5 @@ export const useDataStore = defineStore('data', () => {
     error.value = ''
   }
 
-  return { loading, error, restoreResult, exportBackup, restoreBackup, reset }
+  return { loading, error, restoreResult, exportBackup, exportJson, restoreBackup, reset }
 })

@@ -531,3 +531,20 @@ class TestShareTargetExportExclusion:
         serialized = str(backup)
         assert "super-secret-token" not in serialized
         assert "share" not in serialized.lower()
+
+
+class TestExportDataIncludeConfig:
+    def test_include_config_true_is_default_and_has_config_key(self, graph_with_data):
+        backup = graph_with_data.export_data()
+        assert "config" in backup
+
+    def test_include_config_false_omits_config_key_entirely(self, graph_with_data):
+        backup = graph_with_data.export_data(include_config=False)
+        assert "config" not in backup
+
+    def test_other_keys_unaffected_by_include_config(self, graph_with_data):
+        with_config = graph_with_data.export_data(include_config=True)
+        without_config = graph_with_data.export_data(include_config=False)
+        shared_keys = set(with_config.keys()) & set(without_config.keys())
+        for key in ("version", "feeds", "items", "notes", "tags", "topics", "about_edges"):
+            assert key in shared_keys

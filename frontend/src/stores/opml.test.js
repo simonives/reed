@@ -44,7 +44,7 @@ describe('useOpmlStore', () => {
     const store = useOpmlStore()
     const selection = [{ url: 'https://x.com/feed', title: 'X', tags: [] }]
     const result = await store.importFeeds(selection)
-    expect(api.post).toHaveBeenCalledWith('/opml/import', { feeds: selection })
+    expect(api.post).toHaveBeenCalledWith('/import/opml', { feeds: selection })
     expect(result).toEqual(mockResult)
     expect(store.importResult).toEqual(mockResult)
   })

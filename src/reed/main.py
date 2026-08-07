@@ -14,12 +14,12 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .api.config import router as config_router
-from .api.data import router as data_router
 from .api.errors import register_error_handlers
+from .api.export import router as export_router
 from .api.feeds import router as feeds_router
 from .api.graph import router as graph_router
+from .api.import_ import router as import_router
 from .api.items import router as items_router
-from .api.opml import router as opml_router
 from .api.search import router as search_router
 from .api.share import router as share_router
 from .api.tags import router as tags_router
@@ -84,9 +84,9 @@ def create_app() -> FastAPI:
     app.include_router(items_router)
     app.include_router(tags_router)
     app.include_router(config_router)
-    app.include_router(opml_router)
+    app.include_router(export_router)
+    app.include_router(import_router)
     app.include_router(search_router)
-    app.include_router(data_router)
     app.include_router(topics_router)
     app.include_router(share_router)
 

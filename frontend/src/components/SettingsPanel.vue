@@ -150,6 +150,18 @@
           </div>
 
           <div class="ie-section">
+            <h3>Export personal data</h3>
+            <p class="ie-hint">Download your feeds, items, notes, and tags as portable JSON, without instance settings.</p>
+            <button
+              type="button"
+              class="btn btn--primary"
+              data-testid="export-json-btn"
+              @click="onExportJson"
+              :disabled="data.loading"
+            >{{ data.loading ? 'Exporting…' : 'Download personal data' }}</button>
+          </div>
+
+          <div class="ie-section">
             <h3>Restore from backup</h3>
             <p class="ie-hint ie-warn">⚠ This will permanently replace all your feeds, items, notes, and tags. Export a backup first.</p>
 
@@ -395,6 +407,10 @@ function diff() {
 
 async function onExportBackup() {
   await data.exportBackup()
+}
+
+async function onExportJson() {
+  await data.exportJson()
 }
 
 function onRestoreFileSelect(event) {
