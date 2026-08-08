@@ -2,7 +2,7 @@
 
 [![Licence](https://img.shields.io/badge/Licence-AGPL_3.0-blue.svg)](https://github.com/simonives/reed/blob/main/LICENSE)
 ![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)
-[![CI Status](https://github.com/simonives/reed/actions/workflows/ci.yml/badge.svg)](https://github.com/simonives/reed/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-M1-blue.svg)
+[![CI Status](https://github.com/simonives/reed/actions/workflows/ci.yml/badge.svg)](https://github.com/simonives/reed/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-M5-blue.svg)
 
 A self-hosted, open-source RSS reader with a graph-native data model, public REST API, and first-class MCP server.
 
@@ -16,7 +16,7 @@ I originally built Reed because my daily routines around my second brain did not
 
 ## Status
 
-Active development — M0 scaffold complete. The Python package, Vue 3 frontend skeleton, Dockerfile, and CI pipeline are in place. Working towards M1: feed polling, graph schema, and the first real API endpoints.
+Active development — M0 through M4 complete (foundation, walking skeleton, usable reader, migration-ready, graph alive). Currently on M5 (API and integrations complete): graph query endpoints, share sheet, and export/import reshape are done; topics API completion is the remaining sub-project. M6 (MCP server) and M7 (v1.0.0) are next.
 
 ## Design goals
 
