@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -74,6 +75,33 @@ class TestCreateShareTarget:
             },
         )
         assert r.status_code == 201
+
+    def test_raindrop_numeric_string_collection_id_is_coerced_to_int(self, authed):
+        """#172/#174 — collection_id arrives as a JSON string (e.g. from a
+        form input) but Raindrop's API expects a numeric $id. The
+        Pydantic-coerced value, not the raw request dict, must be what gets
+        persisted, so a later GET reflects the corrected type."""
+        r = authed.post(
+            "/api/v1/share/targets",
+            json={
+                "type": "raindrop",
+                "name": "Raindrop",
+                "config": {"token": "tok", "collection_id": "123"},
+            },
+        )
+        assert r.status_code == 201
+        assert r.json()["data"]["config"]["collection_id"] == 123
+
+    def test_raindrop_non_numeric_collection_id_returns_422(self, authed):
+        r = authed.post(
+            "/api/v1/share/targets",
+            json={
+                "type": "raindrop",
+                "name": "Raindrop",
+                "config": {"token": "tok", "collection_id": "not-a-number"},
+            },
+        )
+        assert r.status_code == 422
 
     def test_creates_webhook_target_with_optional_signing_secret(self, authed):
         r = authed.post(
@@ -169,6 +197,25 @@ class TestUpdateShareTarget:
         )
         assert r.status_code == 404
 
+    def test_patch_raindrop_numeric_string_collection_id_is_coerced_to_int(self, authed):
+        """Code-review finding on PR #183 — create_share_target's int
+        coercion was tested, but update_share_target's (the path a user
+        actually hits when correcting an existing target) wasn't."""
+        created = authed.post(
+            "/api/v1/share/targets",
+            json={
+                "type": "raindrop",
+                "name": "R",
+                "config": {"token": "tok", "collection_id": "111"},
+            },
+        ).json()["data"]
+        r = authed.patch(
+            f"/api/v1/share/targets/{created['id']}",
+            json={"config": {"token": "tok", "collection_id": "456"}},
+        )
+        assert r.status_code == 200
+        assert r.json()["data"]["config"]["collection_id"] == 456
+
     def test_no_auth_returns_401(self, reed_client):
         r = reed_client.patch("/api/v1/share/targets/some-id", json={"name": "X"})
         assert r.status_code == 401
@@ -231,6 +278,28 @@ class TestShareDelivery:
                 "config": {"token": "tok", "collection_id": "123"},
             },
         ).json()["data"]
+
+    def test_share_item_offloads_graph_reads_to_thread(self, authed, subscribed_feed):
+        """Security review on PR #183 — share_item is the one async def
+        endpoint in share.py that made synchronous graph.* calls directly
+        on the event-loop thread. With recompute_derived_edges (#168) now
+        holding _conn_lock across its full body, an un-offloaded call here
+        could block the whole ASGI event loop behind an in-flight recompute
+        rather than just this request."""
+        target = self._webhook_target(authed)
+        item_id = authed.get("/api/v1/items").json()["data"][0]["id"]
+        ok = httpx.Response(200, request=httpx.Request("POST", "https://hooks.example.com/in"))
+        with (
+            patch.object(asyncio, "to_thread", wraps=asyncio.to_thread) as mock_to_thread,
+            patch("reed.api.share.safe_post", AsyncMock(return_value=ok)),
+        ):
+            r = authed.post("/api/v1/share", json={"item_id": item_id, "target_id": target["id"]})
+        assert r.status_code == 200
+        graph = authed.app.state.graph
+        offloaded = [c.args[0] for c in mock_to_thread.call_args_list]
+        assert graph.get_share_target in offloaded
+        assert graph.get_item in offloaded
+        assert graph.get_item_topics in offloaded
 
     def test_webhook_delivery_success(self, authed, subscribed_feed):
         target = self._webhook_target(authed)
@@ -313,6 +382,49 @@ class TestShareDelivery:
         expected = hmac.new(b"topsecret", payload_bytes, hashlib.sha256).hexdigest()
         assert kwargs["headers"]["X-Reed-Signature"] == expected
 
+    def test_raindrop_delivery_coerces_legacy_string_collection_id(self, authed, subscribed_feed):
+        """#172 remaining gap — a target created before this fix (or seeded
+        directly at the graph layer, bypassing API validation) can still
+        have a string collection_id persisted. Delivery must coerce it to
+        numeric regardless of what's stored, not just at creation time."""
+        graph = authed.app.state.graph
+        legacy_target = graph.create_share_target(
+            "raindrop", "Legacy", {"token": "tok", "collection_id": "123"}
+        )
+        item_id = authed.get("/api/v1/items").json()["data"][0]["id"]
+        ok = httpx.Response(
+            200,
+            json={"result": True},
+            request=httpx.Request("POST", "https://api.raindrop.io/rest/v1/raindrop"),
+        )
+        mock_post = AsyncMock(return_value=ok)
+        with patch("reed.api.share.safe_post", mock_post):
+            r = authed.post(
+                "/api/v1/share", json={"item_id": item_id, "target_id": legacy_target["id"]}
+            )
+        assert r.status_code == 200
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["collection"] == {"$id": 123}
+
+    def test_raindrop_delivery_non_numeric_legacy_collection_id_returns_422(
+        self, authed, subscribed_feed
+    ):
+        """Code-review finding on PR #183 — the delivery-time coercion for
+        legacy targets (test above) fixes the numeric-string case, but a
+        legacy target whose collection_id is genuinely non-numeric (valid
+        under the old str-typed RaindropConfig) hits a bare int() call and
+        must not escape as an uncaught 500."""
+        graph = authed.app.state.graph
+        legacy_target = graph.create_share_target(
+            "raindrop", "Legacy", {"token": "tok", "collection_id": "not-a-number"}
+        )
+        item_id = authed.get("/api/v1/items").json()["data"][0]["id"]
+        r = authed.post(
+            "/api/v1/share", json={"item_id": item_id, "target_id": legacy_target["id"]}
+        )
+        assert r.status_code == 422
+        assert "error" in r.json()
+
     def test_raindrop_delivery_success(self, authed, subscribed_feed):
         target = self._raindrop_target(authed)
         item_id = authed.get("/api/v1/items").json()["data"][0]["id"]
@@ -338,7 +450,9 @@ class TestShareDelivery:
             authed.post("/api/v1/share", json={"item_id": item_id, "target_id": target["id"]})
         args, kwargs = mock_post.call_args
         assert args[1] == "https://api.raindrop.io/rest/v1/raindrop"
-        assert kwargs["json"]["collection"] == {"$id": "123"}
+        # #172 — Raindrop's REST v1 $id field is numeric; a string collection_id
+        # sent as "123" instead of 123 can be rejected or silently mis-filed.
+        assert kwargs["json"]["collection"] == {"$id": 123}
         assert kwargs["headers"]["Authorization"] == "Bearer tok"
 
     def test_unknown_target_returns_404(self, authed, subscribed_feed):

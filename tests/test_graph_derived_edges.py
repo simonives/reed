@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -181,3 +182,62 @@ class TestRelatedTo:
             )
             == []
         )
+
+
+def test_recompute_derived_edges_holds_conn_lock_across_full_body(graph):
+    """#168 — recompute_derived_edges issues four _execute calls; each one
+    independently acquires and releases _conn_lock, so unlike restore_data
+    (which wraps its whole transaction in a single `with self._conn_lock:`
+    per #124), a concurrent thread can slip in and acquire the lock in the
+    gap between two of this method's statements — the same gap close()
+    could use to tear down the connection mid-recompute (see #124, #162).
+
+    This test proves every inter-statement gap is closed: before each of
+    the 2nd/3rd/4th _execute calls, a separate thread attempts a
+    non-blocking acquire of the same RLock and must fail. The `t.join()`
+    below is a strict synchronisation barrier, not a timing race — the main
+    thread cannot proceed past it until the probing thread's (near-instant,
+    non-blocking) acquire attempt has completed, so this doesn't depend on
+    hitting a narrow scheduling window. `assert not t.is_alive()` turns a
+    pathological failure to complete within the join timeout into a loud
+    failure rather than a silently-skipped probe.
+    """
+    now = datetime.now(UTC)
+    i1 = _make_item(graph, "i1", "One", now)
+    i2 = _make_item(graph, "i2", "Two", now)
+    graph.enrich_item(i1, [("topic a", 0.05), ("topic b", 0.05)])
+    graph.enrich_item(i2, [("topic a", 0.05), ("topic b", 0.05)])
+
+    original_execute = GraphService._execute
+    call_count = 0
+    acquired_elsewhere = threading.Event()
+
+    def spying_execute(self, query, params=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+
+            def try_acquire():
+                got = self._conn_lock.acquire(blocking=False)
+                if got:
+                    acquired_elsewhere.set()
+                    self._conn_lock.release()
+
+            t = threading.Thread(target=try_acquire)
+            t.start()
+            t.join(timeout=1)
+            assert not t.is_alive(), "probing thread failed to complete within 1s"
+        return original_execute(self, query, params)
+
+    graph._execute = spying_execute.__get__(graph, GraphService)
+    try:
+        graph.recompute_derived_edges(window_days=90, score_threshold=0.1, now=now)
+    finally:
+        del graph._execute
+
+    assert call_count == 4
+    assert not acquired_elsewhere.is_set(), (
+        "a concurrent thread acquired _conn_lock in a gap between "
+        "recompute_derived_edges's statements — the method isn't holding "
+        "the lock across its full body"
+    )

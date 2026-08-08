@@ -1634,75 +1634,95 @@ class GraphService:
         (as pinned tests deliberately do): a stale, untouched edge is
         indistinguishable from a freshly-touched one when their computed_at
         values collide, so the sweep re-checks validity directly instead.
+
+        Holds `_conn_lock` across all four statements, following the same
+        pattern established in `restore_data` for #124: Kuzu transactions are
+        connection-scoped and every thread shares one `kuzu.Connection`, so
+        without a lock held across the full body, `close()` running on
+        another thread could acquire the lock in the gap between two of
+        these statements and proceed to close the connection while this
+        method's remaining statements are still pending — exposing partial,
+        half-recomputed edge state to concurrent readers, and (per #124's
+        precedent) risking entanglement with whatever `close()` does next
+        (#168). This is not the same failure mode `close()`'s own docstring
+        describes for a query genuinely *in flight* when `close()` runs —
+        `_execute`'s per-call lock already prevents that; this gap is
+        between statements, where no query is in flight. `_conn_lock` is a
+        `threading.RLock`, so the nested `_execute` calls below reentrantly
+        acquire without deadlocking. Note this gives mutual exclusion, not
+        atomicity: there is no `BEGIN TRANSACTION` here, so a failure
+        partway through leaves earlier statements' writes committed — judged
+        acceptable given the mark-and-sweep design self-heals on the next run.
         """
         now = now or datetime.now(UTC)
         window_start = now - timedelta(days=window_days)
 
-        self._execute(
-            """
-            MATCH (t1:Topic)<-[:ABOUT]-(i:Item)-[:ABOUT]->(t2:Topic)
-            WHERE t1.id < t2.id
-            WITH t1, t2, count(i) AS co_occurrences
-            WHERE co_occurrences >= 2
-            WITH t1, t2,
-                 CAST(co_occurrences AS DOUBLE)
-                 / (t1.item_count + t2.item_count - co_occurrences) AS jaccard
-            MERGE (t1)-[r:RELATED_TO]->(t2)
-            SET r.weight = jaccard, r.computed_at = $now
-            """,
-            {"now": now},
-        )
-        self._execute(
-            """
-            MATCH (t1:Topic)-[r:RELATED_TO]->(t2:Topic)
-            OPTIONAL MATCH (t1)<-[:ABOUT]-(i:Item)-[:ABOUT]->(t2)
-            WITH r, count(i) AS co_occurrences
-            WHERE co_occurrences < 2
-            DELETE r
-            """
-        )
-
-        self._execute(
-            """
-            MATCH (i1:Item)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2:Item)
-            WHERE i1.id < i2.id
-              AND i1.published_at >= $window_start AND i2.published_at >= $window_start
-            WITH i1, i2, count(t) AS shared_topics
-            WHERE shared_topics >= 2
-            MATCH (i1)-[:ABOUT]->(t1:Topic)
-            WITH i1, i2, shared_topics, count(t1) AS n1
-            MATCH (i2)-[:ABOUT]->(t2:Topic)
-            WITH i1, i2, shared_topics, n1, count(t2) AS n2
-            WITH i1, i2, CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics) AS jaccard
-            WHERE jaccard > $threshold
-            MERGE (i1)-[r:SIMILAR_TO]->(i2)
-            SET r.score = jaccard, r.computed_at = $now
-            """,
-            {"window_start": window_start, "threshold": score_threshold, "now": now},
-        )
-        self._execute(
-            """
-            MATCH (i1:Item)-[r:SIMILAR_TO]->(i2:Item)
-            OPTIONAL MATCH (i1)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2)
-            WITH r, i1, i2, count(t) AS shared_topics
-            OPTIONAL MATCH (i1)-[:ABOUT]->(t1:Topic)
-            WITH r, i1, i2, shared_topics, count(t1) AS n1
-            OPTIONAL MATCH (i2)-[:ABOUT]->(t2:Topic)
-            WITH r, i1, i2, shared_topics, n1, count(t2) AS n2
-            WITH r, i1, i2, shared_topics,
-                 CASE WHEN (n1 + n2 - shared_topics) > 0
-                      THEN CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics)
-                      ELSE 0.0 END AS jaccard
-            WHERE NOT (
-                shared_topics >= 2
-                AND jaccard > $threshold
-                AND i1.published_at >= $window_start
-                AND i2.published_at >= $window_start
+        with self._conn_lock:
+            self._execute(
+                """
+                MATCH (t1:Topic)<-[:ABOUT]-(i:Item)-[:ABOUT]->(t2:Topic)
+                WHERE t1.id < t2.id
+                WITH t1, t2, count(i) AS co_occurrences
+                WHERE co_occurrences >= 2
+                WITH t1, t2,
+                     CAST(co_occurrences AS DOUBLE)
+                     / (t1.item_count + t2.item_count - co_occurrences) AS jaccard
+                MERGE (t1)-[r:RELATED_TO]->(t2)
+                SET r.weight = jaccard, r.computed_at = $now
+                """,
+                {"now": now},
             )
-            DELETE r
-            """,
-            {"threshold": score_threshold, "window_start": window_start},
-        )
+            self._execute(
+                """
+                MATCH (t1:Topic)-[r:RELATED_TO]->(t2:Topic)
+                OPTIONAL MATCH (t1)<-[:ABOUT]-(i:Item)-[:ABOUT]->(t2)
+                WITH r, count(i) AS co_occurrences
+                WHERE co_occurrences < 2
+                DELETE r
+                """
+            )
+
+            self._execute(
+                """
+                MATCH (i1:Item)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2:Item)
+                WHERE i1.id < i2.id
+                  AND i1.published_at >= $window_start AND i2.published_at >= $window_start
+                WITH i1, i2, count(t) AS shared_topics
+                WHERE shared_topics >= 2
+                MATCH (i1)-[:ABOUT]->(t1:Topic)
+                WITH i1, i2, shared_topics, count(t1) AS n1
+                MATCH (i2)-[:ABOUT]->(t2:Topic)
+                WITH i1, i2, shared_topics, n1, count(t2) AS n2
+                WITH i1, i2, CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics) AS jaccard
+                WHERE jaccard > $threshold
+                MERGE (i1)-[r:SIMILAR_TO]->(i2)
+                SET r.score = jaccard, r.computed_at = $now
+                """,
+                {"window_start": window_start, "threshold": score_threshold, "now": now},
+            )
+            self._execute(
+                """
+                MATCH (i1:Item)-[r:SIMILAR_TO]->(i2:Item)
+                OPTIONAL MATCH (i1)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2)
+                WITH r, i1, i2, count(t) AS shared_topics
+                OPTIONAL MATCH (i1)-[:ABOUT]->(t1:Topic)
+                WITH r, i1, i2, shared_topics, count(t1) AS n1
+                OPTIONAL MATCH (i2)-[:ABOUT]->(t2:Topic)
+                WITH r, i1, i2, shared_topics, n1, count(t2) AS n2
+                WITH r, i1, i2, shared_topics,
+                     CASE WHEN (n1 + n2 - shared_topics) > 0
+                          THEN CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics)
+                          ELSE 0.0 END AS jaccard
+                WHERE NOT (
+                    shared_topics >= 2
+                    AND jaccard > $threshold
+                    AND i1.published_at >= $window_start
+                    AND i2.published_at >= $window_start
+                )
+                DELETE r
+                """,
+                {"threshold": score_threshold, "window_start": window_start},
+            )
 
     def get_similar_items(self, item_id: str, limit: int = 20) -> list[dict[str, Any]] | None:
         rows = _rows(

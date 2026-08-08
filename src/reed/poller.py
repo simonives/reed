@@ -69,7 +69,7 @@ class FeedPoller:
         self._running = False
 
     async def _maybe_recompute_edges(self) -> None:
-        config = effective_config(self._graph)
+        config = await asyncio.to_thread(effective_config, self._graph)
         interval = timedelta(minutes=get_settings().derived_edge_interval)
         now = datetime.now(UTC)
         if self._last_recompute is not None and now < self._last_recompute + interval:
@@ -84,7 +84,8 @@ class FeedPoller:
             return
         self._recompute_in_progress = True
         try:
-            config = config or effective_config(self._graph)
+            if config is None:
+                config = await asyncio.to_thread(effective_config, self._graph)
             await asyncio.to_thread(
                 self._graph.recompute_derived_edges,
                 window_days=int(config["similarity_window_days"]),
@@ -96,7 +97,7 @@ class FeedPoller:
 
     async def refresh_feed(self, feed: dict[str, Any]) -> None:
         """Poll a single feed immediately (POST /feeds/{id}/refresh)."""
-        config = effective_config(self._graph)
+        config = await asyncio.to_thread(effective_config, self._graph)
         now = datetime.now(UTC)
         if self._http is not None:
             await self._poll_feed(feed, now, self._http, config)
@@ -107,8 +108,13 @@ class FeedPoller:
     async def _poll_due_feeds(self) -> None:
         assert self._http is not None
         now = datetime.now(UTC)
-        config = effective_config(self._graph)
-        feeds = self._graph.list_feeds_for_polling()
+        # #168-adjacent (PR #183 security review) — recompute_derived_edges
+        # now holds _conn_lock across its full body, so a synchronous
+        # graph.* call made directly on the event-loop thread (rather than
+        # via asyncio.to_thread) here would block the whole ASGI server for
+        # the duration of an in-flight recompute, not just this poll cycle.
+        config = await asyncio.to_thread(effective_config, self._graph)
+        feeds = await asyncio.to_thread(self._graph.list_feeds_for_polling)
         due = [f for f in feeds if self._is_due(f, now, config)]
         if not due:
             return
@@ -149,7 +155,8 @@ class FeedPoller:
             response = await safe_get(http, url, headers=headers)
 
             if response.status_code == 304:
-                self._graph.update_feed_poll_metadata(
+                await asyncio.to_thread(
+                    self._graph.update_feed_poll_metadata,
                     url,
                     now,
                     str(feed["etag"]) if feed.get("etag") else None,
@@ -165,7 +172,9 @@ class FeedPoller:
             last_modified = response.headers.get("Last-Modified")
 
             new_items = await asyncio.to_thread(self._ingest_entries, url, response.content, now)
-            self._graph.update_feed_poll_metadata(url, now, etag, last_modified, None)
+            await asyncio.to_thread(
+                self._graph.update_feed_poll_metadata, url, now, etag, last_modified, None
+            )
             logger.info("Polled %s: %d new item(s)", url, len(new_items))
 
             if new_items and effective_feed_settings(feed, config)["reader_mode_enabled"]:
@@ -176,7 +185,8 @@ class FeedPoller:
         except Exception as exc:
             error = str(exc)[:500]
             logger.warning("Poll failed for %s: %s", url, error)
-            self._graph.update_feed_poll_metadata(
+            await asyncio.to_thread(
+                self._graph.update_feed_poll_metadata,
                 url,
                 now,
                 str(feed["etag"]) if feed.get("etag") else None,
@@ -193,7 +203,9 @@ class FeedPoller:
             async with semaphore:
                 content = await extract_article(item_url, http)
             if content:
-                self._graph.save_reader_content(item_id, content, datetime.now(UTC))
+                await asyncio.to_thread(
+                    self._graph.save_reader_content, item_id, content, datetime.now(UTC)
+                )
 
         await asyncio.gather(
             *(

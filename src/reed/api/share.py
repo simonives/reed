@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -39,7 +40,11 @@ class WebhookConfig(BaseModel):
 
 class RaindropConfig(BaseModel):
     token: str
-    collection_id: str
+    # Raindrop's REST v1 $id field is numeric (#172) — typing this as int lets
+    # Pydantic coerce a numeric string (e.g. from a form input) at
+    # target-creation time and reject a non-numeric value with a clear 422,
+    # rather than failing later, opaquely, against Raindrop's own API.
+    collection_id: int
 
 
 class ShareTargetCreate(BaseModel):
@@ -54,10 +59,19 @@ class ShareTargetUpdate(BaseModel):
     config: dict[str, Any] | None = None
 
 
-def _validate_config(type_: str, config: dict[str, Any]) -> None:
+def _validate_config(type_: str, config: dict[str, Any]) -> dict[str, Any]:
+    """Validate config and return the Pydantic-coerced dict to persist.
+
+    #174 — callers must persist this return value, not the raw request dict:
+    RaindropConfig coerces a numeric string collection_id to int (#172), and
+    that coercion is lost if the caller re-persists the original dict.
+    """
     if type_ == "webhook":
         try:
-            WebhookConfig(**config)
+            # mode="json" so HttpUrl serialises back to a plain string —
+            # graph.create_share_target persists this dict as JSON, and a
+            # raw HttpUrl object isn't JSON-serialisable.
+            return WebhookConfig(**config).model_dump(mode="json", exclude_none=True)
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -65,7 +79,7 @@ def _validate_config(type_: str, config: dict[str, Any]) -> None:
             ) from exc
     elif type_ == "raindrop":
         try:
-            RaindropConfig(**config)
+            return RaindropConfig(**config).model_dump(mode="json")
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -76,6 +90,7 @@ def _validate_config(type_: str, config: dict[str, Any]) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"{type_} targets do not accept a config",
         )
+    return config
 
 
 _UNCREATABLE_TYPES = ("copy_link", "copy_markdown")
@@ -115,8 +130,8 @@ def create_share_target(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"{body.type} targets cannot be created; only the seeded pair exists",
         )
-    _validate_config(body.type, body.config)
-    return envelope(graph.create_share_target(body.type, body.name, body.config))
+    config = _validate_config(body.type, body.config)
+    return envelope(graph.create_share_target(body.type, body.name, config))
 
 
 @router.patch("/targets/{target_id}")
@@ -127,7 +142,7 @@ def update_share_target(
     if "config" in fields:
         existing = graph.get_share_target(target_id)
         if existing is not None:
-            _validate_config(existing["type"], fields["config"])
+            fields["config"] = _validate_config(existing["type"], fields["config"])
     updated = graph.update_share_target(target_id, **fields)
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share target not found")
@@ -240,6 +255,23 @@ async def _deliver_webhook(
 async def _deliver_raindrop(target: dict[str, Any], item: dict[str, Any]) -> None:
     excerpt = _build_excerpt(item)
     config = target["config"]
+    # #172 — collection_id is coerced to int by RaindropConfig at validation
+    # time (create/PATCH), but targets persisted before that fix (or seeded
+    # directly at the graph layer) can still have a string stored — and, since
+    # RaindropConfig.collection_id was str-typed before #172, that string can
+    # be genuinely non-numeric. Coerce defensively here so every existing
+    # target delivers correctly without a manual delete-and-recreate, but
+    # don't let a malformed legacy value escape as an uncaught 500 (code
+    # review, PR #183) — surface it as the same clean 422 an invalid new
+    # target would get at creation time.
+    try:
+        collection_id = int(config["collection_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _DeliveryError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Share target has an invalid collection_id; edit the target to set "
+            "a numeric Raindrop collection ID",
+        ) from exc
     async with http_client() as client:
         response = await safe_post(
             client,
@@ -248,7 +280,7 @@ async def _deliver_raindrop(target: dict[str, Any], item: dict[str, Any]) -> Non
                 "link": item.get("url"),
                 "title": item.get("title"),
                 "excerpt": excerpt,
-                "collection": {"$id": config["collection_id"]},
+                "collection": {"$id": collection_id},
             },
             headers={"Authorization": f"Bearer {config['token']}"},
         )
@@ -259,7 +291,13 @@ async def _deliver_raindrop(target: dict[str, Any], item: dict[str, Any]) -> Non
 async def share_item(
     body: ShareRequest, graph: GraphService = Depends(get_graph)
 ) -> dict[str, Any]:
-    target = graph.get_share_target(body.target_id)
+    # Security review on PR #183 — recompute_derived_edges (#168) now holds
+    # _conn_lock across its full body, so a synchronous graph.* call made
+    # directly here (this is the one genuinely async def endpoint in
+    # share.py — the CRUD routes are plain def and already run in FastAPI's
+    # threadpool) would block the whole ASGI event loop behind an in-flight
+    # recompute, not just this request.
+    target = await asyncio.to_thread(graph.get_share_target, body.target_id)
     if target is None or not target["enabled"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share target not found")
     if target["type"] not in ("webhook", "raindrop"):
@@ -267,12 +305,12 @@ async def share_item(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Target type is not deliverable via the API",
         )
-    item = graph.get_item(body.item_id)
+    item = await asyncio.to_thread(graph.get_item, body.item_id)
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     try:
         if target["type"] == "webhook":
-            topics = graph.get_item_topics(item["id"])
+            topics = await asyncio.to_thread(graph.get_item_topics, item["id"])
             await _deliver_webhook(target, item, topics)
         else:
             await _deliver_raindrop(target, item)
