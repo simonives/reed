@@ -1581,28 +1581,63 @@ class GraphService:
         if not rows:
             return None
         topic = rows[0]
-        item_rows = _rows(
+        topic["related"] = self.get_related_topics(topic_id)
+        return topic
+
+    def get_related_topics(self, topic_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        return _rows(
             self._execute(
-                "MATCH (i:Item)-[a:ABOUT]->(t:Topic) WHERE t.id = $id "
-                "OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(i) "
-                "RETURN i.id AS id, i.title AS title, i.url AS url, "
-                "f.id AS feed_id, coalesce(f.display_name, f.title) AS feed_title "
-                "ORDER BY a.score ASC LIMIT 20",
+                "MATCH (t1:Topic {id: $topic_id})-[r:RELATED_TO]-(t2:Topic) "
+                "RETURN t2.id AS id, t2.name AS name, r.weight AS weight "
+                "ORDER BY r.weight DESC, t2.id ASC LIMIT $limit",
+                {"topic_id": topic_id, "limit": limit},
+            )
+        )
+
+    def topic_exists(self, topic_id: str) -> bool:
+        rows = _rows(
+            self._execute(
+                "MATCH (t:Topic) WHERE t.id = $id RETURN t.id AS id",
                 {"id": topic_id},
             )
         )
-        topic["items"] = [
-            {
-                "id": r["id"],
-                "title": r["title"],
-                "url": r["url"],
-                "feed": (
-                    {"id": r["feed_id"], "title": r["feed_title"]} if r.get("feed_id") else None
-                ),
-            }
-            for r in item_rows
-        ]
-        return topic
+        return bool(rows)
+
+    def get_topic_items(
+        self,
+        topic_id: str,
+        cursor_ts: datetime | None = None,
+        cursor_guid: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        cursor_clause = ""
+        params: dict[str, Any] = {"topic_id": topic_id, "limit": limit}
+        if cursor_ts is not None and cursor_guid is not None:
+            cursor_clause = (
+                "\nWITH i, f"
+                "\nWHERE (coalesce(i.published_at, i.fetched_at) < $cursor_ts"
+                " OR (coalesce(i.published_at, i.fetched_at) = $cursor_ts"
+                " AND i.guid > $cursor_guid))"
+            )
+            params["cursor_ts"] = cursor_ts
+            params["cursor_guid"] = cursor_guid
+        result = self._execute(
+            f"""
+            MATCH (i:Item)-[:ABOUT]->(t:Topic {{id: $topic_id}})
+            OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(i){cursor_clause}
+            WITH i, collect(f)[1] AS f
+            RETURN {_ITEM_LIST_COLS}, f.id AS feed_id,
+                   coalesce(f.display_name, f.title) AS feed_title
+            ORDER BY coalesce(i.published_at, i.fetched_at) DESC, i.guid ASC
+            LIMIT $limit
+            """,
+            params,
+        )
+        items = _rows(result)
+        tags_by_guid = self._tags_for_items([i["guid"] for i in items])
+        for item in items:
+            item["tags"] = tags_by_guid.get(item["guid"], [])
+        return items
 
     def get_item_topics(self, item_id: str) -> list[dict[str, Any]]:
         return [

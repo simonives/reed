@@ -11,8 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from ..graph import GraphService
 from ..poller import FeedPoller
 from .deps import get_graph, get_poller, require_api_key
-from .items import _decode_cursor, _encode_cursor
-from .schemas import cursor_paginated, envelope, item_list_response
+from .schemas import cursor_paginated, decode_cursor, encode_cursor, envelope, item_list_response
 
 router = APIRouter(
     prefix="/api/v1/graph",
@@ -54,13 +53,13 @@ def author_items(
     cursor_ts, cursor_guid = None, None
     if cursor is not None:
         try:
-            cursor_ts, cursor_guid = _decode_cursor(cursor)
+            cursor_ts, cursor_guid = decode_cursor(cursor)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
             ) from exc
     items = graph.get_author_items(author_id, cursor_ts, cursor_guid, limit)
-    next_cursor = _encode_cursor(items[-1]) if len(items) == limit else None
+    next_cursor = encode_cursor(items[-1]) if len(items) == limit else None
     return cursor_paginated([item_list_response(i) for i in items], next_cursor)
 
 

@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -23,6 +26,41 @@ def paginated(items: list[dict[str, Any]], total: int, offset: int) -> dict[str,
 
 def cursor_paginated(items: list[dict[str, Any]], next_cursor: str | None) -> dict[str, Any]:
     return envelope(items, meta={"next_cursor": next_cursor})
+
+
+def encode_cursor(item: dict[str, Any]) -> str:
+    ts = item.get("published_at") or item.get("fetched_at")
+    payload = {"ts": ts.isoformat() if ts else None, "guid": item["guid"]}
+    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+
+_MAX_CURSOR_LENGTH = 512
+
+
+def decode_cursor(cursor: str) -> tuple[datetime | None, str]:
+    # Security review, PR #199 — a real cursor is a small base64 blob (a
+    # timestamp + a guid), so reject anything implausibly large before
+    # decoding. This also bounds how deep a crafted payload's JSON nesting
+    # can go, closing the RecursionError CPython's json scanner raises on
+    # deeply nested input (not caught by the except clause below, so it
+    # otherwise reached the client as an uncaught 500).
+    if len(cursor) > _MAX_CURSOR_LENGTH:
+        raise ValueError("Invalid cursor")
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+        ts_str = payload["ts"]
+        guid = str(payload["guid"])
+        ts = datetime.fromisoformat(ts_str) if ts_str else None
+        return ts, guid
+    except (
+        binascii.Error,
+        json.JSONDecodeError,
+        KeyError,
+        ValueError,
+        TypeError,
+        RecursionError,
+    ) as exc:
+        raise ValueError("Invalid cursor") from exc
 
 
 def feed_response(feed: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:

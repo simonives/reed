@@ -86,17 +86,8 @@ class TestGetTopic:
         topic = r.json()["data"]
         assert topic["id"] == topic_id
         assert "name" in topic
-        assert "items" in topic
-        assert isinstance(topic["items"], list)
-
-    def test_topic_items_have_expected_shape(self, enriched):
-        topic_id = enriched.get("/api/v1/topics").json()["data"][0]["id"]
-        topic = enriched.get(f"/api/v1/topics/{topic_id}").json()["data"]
-        assert topic["items"], "expected at least one item in topic detail"
-        item = topic["items"][0]
-        assert "id" in item
-        assert "title" in item
-        assert "url" in item
+        assert "related" in topic
+        assert "items" not in topic
 
     def test_returns_404_for_unknown(self, authed):
         r = authed.get("/api/v1/topics/00000000-0000-0000-0000-000000000000")
@@ -104,6 +95,56 @@ class TestGetTopic:
 
     def test_requires_auth(self, reed_client):
         r = reed_client.get("/api/v1/topics/some-id")
+        assert r.status_code == 401
+
+
+class TestRelatedTopicsEndpoint:
+    def test_returns_empty_list_for_topic_with_no_relations(self, enriched):
+        topic_id = enriched.get("/api/v1/topics").json()["data"][0]["id"]
+        r = enriched.get(f"/api/v1/topics/{topic_id}/related")
+        assert r.status_code == 200
+        assert r.json()["data"] == []
+
+    def test_returns_404_for_unknown_topic(self, authed):
+        r = authed.get("/api/v1/topics/00000000-0000-0000-0000-000000000000/related")
+        assert r.status_code == 404
+
+    def test_requires_auth(self, reed_client):
+        r = reed_client.get("/api/v1/topics/some-id/related")
+        assert r.status_code == 401
+
+
+class TestTopicItemsEndpoint:
+    def test_returns_items_about_topic(self, enriched):
+        topic_id = enriched.get("/api/v1/topics").json()["data"][0]["id"]
+        r = enriched.get(f"/api/v1/topics/{topic_id}/items")
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["data"]) > 0
+        assert "next_cursor" in body["meta"]
+
+    def test_returns_404_for_unknown_topic(self, authed):
+        r = authed.get("/api/v1/topics/00000000-0000-0000-0000-000000000000/items")
+        assert r.status_code == 404
+
+    def test_invalid_cursor_returns_400(self, enriched):
+        topic_id = enriched.get("/api/v1/topics").json()["data"][0]["id"]
+        r = enriched.get(f"/api/v1/topics/{topic_id}/items", params={"cursor": "not-valid!!"})
+        assert r.status_code == 400
+
+    def test_deeply_nested_cursor_returns_400_not_500(self, enriched):
+        """Security review on PR #199 — decode_cursor didn't catch
+        RecursionError, so this crashed with an uncaught 500 instead of a
+        clean 400. This endpoint is the codec's third consumer."""
+        import base64
+
+        topic_id = enriched.get("/api/v1/topics").json()["data"][0]["id"]
+        cursor = base64.urlsafe_b64encode(b"[" * 2000).decode()
+        r = enriched.get(f"/api/v1/topics/{topic_id}/items", params={"cursor": cursor})
+        assert r.status_code == 400
+
+    def test_requires_auth(self, reed_client):
+        r = reed_client.get("/api/v1/topics/some-id/items")
         assert r.status_code == 401
 
 

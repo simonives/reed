@@ -4,9 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
-import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,25 +13,14 @@ from pydantic import BaseModel
 from ..graph import GraphService
 from ..reader import extract_article
 from .deps import get_graph, require_api_key
-from .schemas import cursor_paginated, envelope, item_detail_response, item_list_response
-
-
-def _encode_cursor(item: dict[str, Any]) -> str:
-    ts = item.get("published_at") or item.get("fetched_at")
-    payload = {"ts": ts.isoformat() if ts else None, "guid": item["guid"]}
-    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-
-
-def _decode_cursor(cursor: str) -> tuple[datetime | None, str]:
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
-        ts_str = payload["ts"]
-        guid = str(payload["guid"])
-        ts = datetime.fromisoformat(ts_str) if ts_str else None
-        return ts, guid
-    except (binascii.Error, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-        raise ValueError("Invalid cursor") from exc
-
+from .schemas import (
+    cursor_paginated,
+    decode_cursor,
+    encode_cursor,
+    envelope,
+    item_detail_response,
+    item_list_response,
+)
 
 router = APIRouter(
     prefix="/api/v1/items",
@@ -90,7 +76,7 @@ def list_items(
     cursor_guid: str | None = None
     if cursor is not None:
         try:
-            cursor_ts, cursor_guid = _decode_cursor(cursor)
+            cursor_ts, cursor_guid = decode_cursor(cursor)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
@@ -106,7 +92,7 @@ def list_items(
         cursor_ts=cursor_ts,
         cursor_guid=cursor_guid,
     )
-    next_cursor = _encode_cursor(items[-1]) if len(items) == limit else None
+    next_cursor = encode_cursor(items[-1]) if len(items) == limit else None
     return cursor_paginated([item_list_response(i) for i in items], next_cursor)
 
 
