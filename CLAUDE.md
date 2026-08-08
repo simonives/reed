@@ -8,7 +8,7 @@ Reed is a self-hosted, open-source RSS reader with a graph-native data model, a 
 
 **Current status**
 
-Current milestone: **M4 — Graph alive (complete)**.
+Current milestone: **M5 — API and integrations complete (complete)**. Starting **M6 — MCP server** next.
 
 | Milestone | Name | Status |
 |---|---|---|
@@ -17,8 +17,8 @@ Current milestone: **M4 — Graph alive (complete)**.
 | M2 | Usable reader | Complete |
 | M3 | Migration-ready | Complete |
 | M4 | Graph alive | Complete (derived edges + graph query endpoints deliberately deferred to M5 sub-project 1 — see below) |
-| M5 | API and integrations complete | In progress — specced in full, sub-project 1 partially implemented |
-| M6 | MCP server | Not started |
+| M5 | API and integrations complete | **Complete** — all four sub-projects merged (2026-08-08) |
+| M6 | MCP server | **Starting next** — see scope below |
 | M7 | v1.0.0 | Not started |
 
 M4 phase breakdown:
@@ -31,16 +31,16 @@ M4 phase breakdown:
 
 M4-A's design deferred `SIMILAR_TO`/`RELATED_TO` derived-edge computation and the `/graph/*` query endpoints described in `docs/roadmap/milestones.md`'s M4 scope — that work now lives as M5 sub-project 1 (below), not as an M4 gap.
 
-M5 is decomposed into four independently-specced sub-projects (specs and plans on disk at `docs/superpowers/specs/2026-07-24-m5-*-design.md` and `docs/superpowers/plans/2026-07-24-m5-*.md`, gitignored — not in git history, reference locally). All four are fully specced and adversarially reviewed (Gemini 3.1 Pro). Status:
+M5 was decomposed into four independently-specced sub-projects (specs and plans on disk at `docs/superpowers/specs/2026-07-24-m5-*-design.md` and `docs/superpowers/plans/2026-07-24-m5-*.md`, gitignored — not in git history, reference locally), all fully specced and adversarially reviewed (Gemini 3.1 Pro). **All four are now complete and merged:**
 
 | Sub-project | Scope | Status |
 |---|---|---|
 | 1. Graph query endpoints | Derived-edge recompute job (`SIMILAR_TO`/`RELATED_TO`, schema v7), six `/api/v1/graph/*` endpoints | **Complete and merged** (PR #159, 2026-07-26) |
 | 2. Share sheet | `ShareTarget` node (schema v8), `/share/*` CRUD + delivery (webhook, Raindrop.io), Settings UI + reading-view Share button | **Complete and merged** (PR #171, 2026-08-04) |
 | 3. Export/import reshape | Reconcile `/data/*`, `/opml/*` against `api-design.md`'s `/export/*`, `/import/*` shape; `X-Confirm-Destructive` header on restore | **Complete and merged** (PR #178, 2026-08-07) |
-| 4. Topics API completion | `/topics/{id}/items`, `/topics/{id}/related`; fixes issue #99 by deletion | Specced, not started — depends on sub-project 1's `RELATED_TO` schema |
+| 4. Topics API completion | `/topics/{id}/items`, `/topics/{id}/related`; fixes issue #99 by deletion | **Complete and merged** (PR #199, 2026-08-08) |
 
-PR #171's `/code-review` (Opus) surfaced four issues fixed before merge (clipboard failures on non-secure origins going unhandled, `_classify_response` crashing on non-dict JSON error bodies, `GET /share/targets` returning secrets in plaintext for no client benefit, and a delete-protection bypass via creating new copy-type targets) plus three deferred as fast-follow issues: **#172** (Raindrop `collection_id` sent as string, API expects numeric), **#173** (Settings enabled-checkbox can visually desync from store state on a failed toggle), **#174** (share-target config validation discards the Pydantic-coerced model, raw dict persisted instead).
+PR #171's `/code-review` (Opus) surfaced four issues fixed before merge (clipboard failures on non-secure origins going unhandled, `_classify_response` crashing on non-dict JSON error bodies, `GET /share/targets` returning secrets in plaintext for no client benefit, and a delete-protection bypass via creating new copy-type targets) plus three deferred as fast-follow issues, subsequently fixed in PR #183 (below): **#172** (Raindrop `collection_id` sent as string, API expects numeric), **#173** (Settings enabled-checkbox can visually desync from store state on a failed toggle), **#174** (share-target config validation discards the Pydantic-coerced model, raw dict persisted instead).
 
 PR #178 preserved and folded in two pre-existing bug fixes the written plan predated (#139's OPML feed-validation, which the plan's draft code would have silently regressed; #155's real feed-metadata population) plus #154 (`safe_url` `TypeError` on non-string input) as an extra task. Its `/code-review` (Opus) headline "critical" finding — a claimed >1MB upload causing an uncaught 500 on backup restore — was independently verified and found NOT to reproduce (Starlette's `Request._get_form()` already converts the internal exception to a clean 400); no fix was needed. Two genuine minor findings were deferred as fast-follow issues: **#179** (duplicated export-route boilerplate in `api/export.py`), **#180** (`import_opml` opens a fresh `http_client()` per feed instead of reusing one across the batch).
 
@@ -49,11 +49,17 @@ PR #178 preserved and folded in two pre-existing bug fixes the written plan pred
 - **#161** (MEDIUM, closed) — `POST /graph/recompute`'s fire-and-forget task can be garbage-collected mid-flight
 - **#162** (MEDIUM, closed) — `GraphService.close()` can block the entire event loop during shutdown if a recompute is mid-flight
 
-PR #167's adversarial review (Gemini 3.1 Pro) surfaced a further, pre-existing defect adjacent to this code path — **#168** (bug): `GraphService.recompute_derived_edges` doesn't hold `_conn_lock` across its full multi-statement body, unlike `restore_data`'s established #124 precedent, creating a segfault-risk race if `close()` interleaves mid-recompute. Not a #167 regression (present since PR #159), not gating, but worth fixing before M6 leans on this path further.
+PR #167's adversarial review (Gemini 3.1 Pro) surfaced a further, pre-existing defect adjacent to this code path — **#168** (bug, closed): `GraphService.recompute_derived_edges` didn't hold `_conn_lock` across its full multi-statement body, unlike `restore_data`'s established #124 precedent, creating a segfault-risk race if `close()` interleaved mid-recompute. Fixed in PR #183 (2026-08-08) — `recompute_derived_edges` now holds the lock for its full body, matching `restore_data`'s pattern.
 
-Issues #163-#165 (LOW severity — topic-timeline null bucket, feed-health null-timestamp edge case, duplicated magic number) and #168 do not block M6 and can be picked up opportunistically during M5 sub-projects 2-4 or ahead of M6.
+**PR #183 (2026-08-08)** closed out #168, #172, and #174 (which turned out to share a root cause with #172 — see above), plus fixes surfaced by two rounds of Opus review and Gemini adversarial passes on this branch: a strengthened, verified-red-fails-without-the-fix regression test for #168's lock; the remaining #172 migration gap (pre-existing Raindrop targets with a stored string `collection_id` now coerce correctly at delivery time too, not just at creation); and event-loop-blocking mitigation (synchronous `graph.*` calls in `poller.py`'s async methods and `share.py`'s `share_item` now route through `asyncio.to_thread`, since #168's fix widened `_conn_lock`'s hold time across the whole recompute). Also directly verified Kuzu's actual concurrency model against the installed version (0.11.3) rather than assuming it — multiple `Connection`s per `Database` are supported, only one write transaction is allowed system-wide at a time, but reads from another connection succeed concurrently with an open write transaction elsewhere — informing **#184**, a follow-up architecture item (connection-pool redesign) not attempted in that PR. Six further findings from that review round filed as individual issues: **#185** (pre-existing `_redact_target` crash on a null config), **#186** (webhook PATCH omitting `secret` silently disables HMAC signing), **#187/#188** (share-target config: unknown keys silently dropped, webhook URL silently normalised), **#189** (422 error detail leaks raw Pydantic validation text), **#190** (audit of sibling `graph.py` methods sharing #168's original unguarded-multi-statement pattern).
 
-Active session plan: M5 sub-projects 1-3 are merged. Sub-project 4 (topics API completion, fully specced on disk) is the last piece of M5. M6 is also unblocked and available as an alternative. **Before starting new build work, review the open-issue backlog (58 as of 2026-08-07) — Simon flagged it's growing long and wants to make sure tech-debt isn't compounding faster than it's resolved.** Simon's call on ordering. See Expiry for the refresh trigger on this subsection.
+**PR #199 (2026-08-08, M5 sub-project 4)** closed out issue #99 by deletion (the fragile `ORDER BY` on an unprojected relationship alias in `get_topic`'s embedded items preview no longer exists — the preview itself was replaced by a `related` field). Two Opus reviews plus a Gemini adversarial pass on that review round found and fixed one MEDIUM in-PR (`decode_cursor` didn't catch `RecursionError` on a deeply-nested crafted cursor, producing an uncaught 500 — both Opus reviews initially called it deferrable/pre-existing, Gemini pushed for a fix now since this PR now owns the fix location; fixed, covers all three cursor-codec consumers). Four further findings filed as follow-ups: **#200** (bug — cursor pagination loops forever when an item's `published_at`/`fetched_at` are both NULL, pre-existing across three call sites, reachable via a backup restore missing `fetched_at`; Gemini escalated this from "defer" to a higher-priority operational risk, but both Opus reviews' read that it's genuinely pre-existing still stands, so it's filed not fixed), **#201** (`/topics/{id}/items` doesn't implement its documented "filterable" contract), **#202** (`/topics/{id}/related` silently truncates at 20 with no client-visible signal — note this revisits a deliberate, already-adversarially-reviewed design call from the original spec, not an oversight), **#203** (batched consistency findings: `topic_exists` duplicates an existing `_exists` helper, inconsistent 404-costing pattern vs. sub-project 1's endpoints, unhandled 500s bypass the error envelope contract).
+
+Also fixed this session: **#182** (untracked high-severity Dependabot alert on `cryptography`, resolved via dependency bump), **#154** (closed — already fixed in PR #178, issue had never been closed), and a full Dependabot backlog sweep (7 open PRs merged or resolved down to 1 genuine conflict requiring a coordinated `vite`+`@vitejs/plugin-vue` bump, fixed directly in PR #197).
+
+**M6 scope** (per `docs/roadmap/milestones.md`): full MCP server via FastMCP, all 21 tools from `docs/architecture/mcp-server.md` (feed tools, item tools, graph traversal, export, config), stdio transport (Claude Desktop, Cursor) and HTTP/SSE transport (networked/remote clients), auth via `REED_API_KEY` on both. Done means a complete reading session conducted entirely through Claude Desktop — browse, read, traverse via graph, annotate, mark read — zero UI. Not yet specced — starts with `/brainstorming` per the mandatory Superpowers workflow below.
+
+Active session plan: M5 is fully complete. M6 (MCP server) is next and unblocked — its gate was cleared back in PR #167/#183. **Before starting new build work, review the open-issue backlog (68 as of 2026-08-08) — Simon flagged it's growing long and wants to make sure tech-debt isn't compounding faster than it's resolved.** Simon's call on ordering. See Expiry for the refresh trigger on this subsection.
 
 **Architecture**
 
