@@ -8,7 +8,7 @@ Reed is a self-hosted, open-source RSS reader with a graph-native data model, a 
 
 **Current status**
 
-Current milestone: **M5 — API and integrations complete (complete)**. Starting **M6 — MCP server** next.
+Current milestone: **M6 — MCP server (complete)**. Starting **M7 — v1.0.0** next.
 
 | Milestone | Name | Status |
 |---|---|---|
@@ -17,9 +17,9 @@ Current milestone: **M5 — API and integrations complete (complete)**. Starting
 | M2 | Usable reader | Complete |
 | M3 | Migration-ready | Complete |
 | M4 | Graph alive | Complete (derived edges + graph query endpoints deliberately deferred to M5 sub-project 1 — see below) |
-| M5 | API and integrations complete | **Complete** — all four sub-projects merged (2026-08-08) |
-| M6 | MCP server | **Starting next** — see scope below |
-| M7 | v1.0.0 | Not started |
+| M5 | API and integrations complete | Complete — all four sub-projects merged (2026-08-08) |
+| M6 | MCP server | **Complete** — merged (PR #229, 2026-08-10) |
+| M7 | v1.0.0 | **Starting next** |
 
 M4 phase breakdown:
 
@@ -57,9 +57,11 @@ PR #167's adversarial review (Gemini 3.1 Pro) surfaced a further, pre-existing d
 
 Also fixed this session: **#182** (untracked high-severity Dependabot alert on `cryptography`, resolved via dependency bump), **#154** (closed — already fixed in PR #178, issue had never been closed), and a full Dependabot backlog sweep (7 open PRs merged or resolved down to 1 genuine conflict requiring a coordinated `vite`+`@vitejs/plugin-vue` bump, fixed directly in PR #197).
 
-**M6 scope** (per `docs/roadmap/milestones.md`): full MCP server via FastMCP, all 21 tools from `docs/architecture/mcp-server.md` (feed tools, item tools, graph traversal, export, config), stdio transport (Claude Desktop, Cursor) and HTTP/SSE transport (networked/remote clients), auth via `REED_API_KEY` on both. Done means a complete reading session conducted entirely through Claude Desktop — browse, read, traverse via graph, annotate, mark read — zero UI. Not yet specced — starts with `/brainstorming` per the mandatory Superpowers workflow below.
+**M6 — complete (PR #229, merged 2026-08-10).** Full MCP server via FastMCP: 27 tools (grew from the originally-scoped 21 as the design settled — feed, item, graph traversal, discovery, research, export, config tools), a `reed://graph/overview` resource, and three guided-workflow prompts (`deep_reading_session`, `weekly_digest`, `research_thread`). Both stdio (Claude Desktop, Cursor, via `reed.mcp:main`) and HTTP transports, auth via `REED_API_KEY`/`X-API-Key` on both. Built via Subagent-Driven Development across 13 tasks specced in `docs/superpowers/specs/2026-08-09-m6-mcp-server-design.md` and `docs/superpowers/plans/2026-08-09-m6-mcp-server.md` (gitignored — reference locally), each with a task-scoped review, followed by a whole-branch review and one consolidated fix wave. New backend capability added along the way: `find_connection_path` (graph traversal between items/topics via ABOUT/RELATED_TO), topic centrality (PageRank) and clustering (Louvain) over Kuzu's `algo` extension, `append_note`, `get_topic_by_name`. 19 follow-up issues filed from the whole-branch review (#207–#226) plus 2 from the final re-review (#227, #228) — none block merge, all deferred tech-debt/doc-gap/nit-level. A genuine ~2.6x PageRank directional bias from `RELATED_TO`'s arbitrary canonical edge direction was investigated, found to have no clean fix in the installed Kuzu version without a schema-level rewrite, and documented-and-deferred rather than silently shipped or withheld (issue #206). Four new design questions were also raised and deliberately deferred during M6 brainstorming, logged in `docs/roadmap/open-decisions.md`: author node/co-authorship, saved/named graph traversal views, manual item capture from an external URL, and a scheduled AI web-scanning/discovery feature (issue #205, explicitly scoped as post-v1.0.0, needs its own future milestone and brainstorming pass).
 
-Active session plan: M5 is fully complete. M6 (MCP server) is next and unblocked — its gate was cleared back in PR #167/#183. **Before starting new build work, review the open-issue backlog (68 as of 2026-08-08) — Simon flagged it's growing long and wants to make sure tech-debt isn't compounding faster than it's resolved.** Simon's call on ordering. See Expiry for the refresh trigger on this subsection.
+**Not yet done:** a live Claude Desktop reading session through the stdio bridge — the milestone's own "done means a complete reading session conducted entirely through Claude Desktop, zero UI" criterion — requires an actual Claude Desktop client and could not be performed in the agent environment that built M6. Simon should verify this manually before treating M6 as fully proven end-to-end, though the branch itself is merged and CI-green.
+
+Active session plan: M6 is complete. M7 (v1.0.0) is next — not yet scoped. **Before starting new build work, review the open-issue backlog (now grown further with M6's follow-ups — was 68 as of 2026-08-08) — Simon flagged it's growing long and wants to make sure tech-debt isn't compounding faster than it's resolved.** Simon's call on ordering. See Expiry for the refresh trigger on this subsection.
 
 **Architecture**
 
@@ -215,6 +217,6 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
 
 ## Expiry
 
-- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-08-07, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
+- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-08-10, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
 - Pinned model versions (Sonnet 4.6, Opus 4.8, Gemini 3.1 Pro (High)) — owner: Simon, last-verified: 2026-07-25, refresh interval: whenever a named model is superseded or Simon changes routing.
 - Issue #31 reference (primary-key won't-fix) — stable design decision, not perishable; no refresh trigger.
