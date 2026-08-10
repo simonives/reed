@@ -80,6 +80,61 @@ Resolved items are removed from this list and captured in the relevant design or
 
 ---
 
+## Author node / co-authorship
+
+**Question:** Should `author` become a proper `Author` graph node instead of a flat string property on `Item`?
+
+**Affects:** Schema (would need a migration), byline parsing/normalisation for co-authored and dirty bylines ("A, B and C", names with titles), any M6+ tool that wants richer author traversal (co-authorship, author-topic affinity graphs)
+
+**Context:** Raised during M6 brainstorming (2026-08-09) when considering richer author-browsing MCP tools. `get_author_profile` (topics/date-range/feeds for an author, via exact-string match on `Item.author`) covers the near-term need without a schema change. A real `Author` node buys co-authorship traversal but requires normalising dirty byline strings first, which is nontrivial and not currently blocking anything.
+
+**Recommendation pending:** Not needed for M6. Revisit only if a concrete use case needs co-authorship traversal specifically (author-profile-by-topic is enough for now).
+
+---
+
+## Saved/named graph traversal views
+
+**Question:** Should Reed let a user save a named query/traversal ("my weekly AI governance digest") for re-running later?
+
+**Affects:** Would need a new node type (or REST-only feature) to store the saved query; MCP-only state would not benefit the web UI
+
+**Context:** Raised during M6 brainstorming (2026-08-09). In an MCP/Claude Code context, this durable-recipe layer already exists client-side (`CLAUDE.md`, slash commands, skills), so building it into Reed risks duplicating something the client already does better, and doing it MCP-only would fragment it away from the web UI.
+
+**Recommendation pending:** Don't build for M6. If it ever lands, it belongs as a REST + web UI feature, not MCP-only.
+
+---
+
+## Manual item capture from an external URL
+
+**Question:** Should Reed support pulling an arbitrary external URL in as a first-class `Item` (not just an annotation), reusing the existing `http.safe_get` SSRF guard and `reader.extract_article`?
+
+**Affects:** Schema (what `Feed` does an orphan item belong to, given most queries reach items via `HAS_ITEM`), polling semantics, export/import handling of orphan items, unread-count accuracy
+
+**Context:** Raised during M6 brainstorming (2026-08-09) as a genuinely graph-native alternative to `capture_external_finding` (which appends to a `Note` instead) — the finding becomes a real node and joins `SIMILAR_TO` computation rather than sitting in a note. M6 ships `capture_external_finding` for the immediate research-loop need; this is a larger design question deliberately deferred rather than rejected.
+
+**Recommendation pending:** Not resolved. Needs its own design pass on the orphan-item questions above before being attempted.
+
+---
+
+## Scheduled AI web-scanning / discovery feature
+
+**Question:** Should Reed support user-configured, scheduled web scanning — themes/topics/sites as parameters, a configurable crawl frequency, results summarised within Reed with links, and the ability to subscribe to discovered sources — and if so, does the scanning execution live inside Reed or get delegated to an external AI client?
+
+**Affects:** Potentially a new node type (watch/scan configuration), a new scheduled trigger separate from the existing feed poller, a summarisation/presentation surface in the web UI, and — depending on which option below — new external API dependencies (search + LLM) or new MCP write-back tools.
+
+**Context:** Raised by Simon (2026-08-09), immediately after M6's design settled the closely related question of whether Reed should ship its own `web_search` MCP tool (rejected — redundant with the client's own search, adds a second secret/API dependency, contradicts the "graph traversal interface, not a research agent" design principle). This request is materially larger: not a single search call, but a standing, scheduled discovery subsystem. It also spans multiple genuinely independent pieces (config storage, scheduling, crawling/summarisation, presentation, subscribe workflow) — per the brainstorming process's own decomposition guidance, this is not a single sub-project-sized unit of work and would need its own `/brainstorming` pass when picked up.
+
+**Options:**
+- **Native in Reed** — Reed's own background job (like the feed poller) periodically calls an external search + LLM summarisation API directly. Full control and works with any MCP client, but reintroduces exactly the problem M6 just rejected at a larger scale: new secrets, rate limits, provider lock-in, ongoing operational cost, baked into a project whose entire auth story today is one API key.
+- **Delegate to an AI client (Simon's stated preference)** — Reed stores the watch configuration (themes/topics/sites/frequency) via its existing API/MCP surface only. The actual scanning is triggered externally (e.g. a scheduled `claude` CLI invocation via host cron/launchd, outside Reed's container) which reads the config, does its own web research using its own search tool, and writes findings back into Reed through new MCP write tools analogous to M6's `capture_external_finding`. Reed never touches a search API or an LLM API directly — it stores config and receives write-backs, consistent with the position just established in M6.
+- **Hybrid** — Reed owns config + schedule + a "candidate discoveries" review surface, but genuinely delegates the crawl/summarise step to an external process either way. Mostly the same as the second option with more Reed-side scaffolding (e.g. a due-for-scan query the external agent polls) — worth considering only if the second option's "purely external cron" trigger proves too manual in practice.
+
+**The application-shell gap (Simon, 2026-08-09, follow-up):** even under the delegated-execution option, "Claude Code does the scanning" only covers the research step. It doesn't cover the parts that make this a *product feature* rather than a one-off script: user-defined settings/scope (what themes/topics/sites, editable over time), firing on a regular schedule, collating results across runs, analysing and categorising what comes back, displaying results somewhere durable, and providing actions against those results (subscribe, dismiss, save, etc). That's application surface — config storage, a results/candidates data model, a UI, and write actions wired back into the graph — that only Reed (or something like it) can own, regardless of who does the actual crawling. So "delegate the search" and "package it as a feature" are different questions; the delegation answer above only resolves the first one. The second is real Reed-side scope (schema + API + UI) whenever this is picked up.
+
+**Recommendation pending:** The delegated-to-AI-client option is the better fit for the *research* step specifically — it extends M6's just-established principle (Reed is a graph store and traversal interface; research/search capability belongs to the client) rather than reversing it, and it avoids a second external-API dependency entirely. But that only answers who does the scanning, not who owns the feature — the application-shell gap above is genuine Reed-side work (config, results model, UI, actions) no matter which scanning option is chosen. Scope is too large and too different in kind (a proactive discovery subsystem, not passive feed aggregation) to fold into M6 or M7 — v1.0.0's scope is already locked and doesn't include this. Treat as a post-v1 feature with its own future milestone and its own `/brainstorming` pass; not a blocker for the current M6→M7 path. Tracked as [issue #205](https://github.com/simonives/reed/issues/205).
+
+---
+
 ## Resolved decisions (moved here for reference)
 
 | Decision | Resolved in |
