@@ -159,7 +159,7 @@ class TestGetTopicTimeline:
         timeline = graph.get_topic_timeline(topic_id)
         assert len(timeline) == 1
         assert timeline[0]["count"] == 1
-        assert "week" in timeline[0]
+        assert "period" in timeline[0]
 
 
 class TestGetFeedHealth:

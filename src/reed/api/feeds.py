@@ -90,42 +90,66 @@ def _feed_or_404(graph: GraphService, feed_id: str) -> dict[str, Any]:
     return feed
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
-async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
-    if await asyncio.to_thread(graph.feed_exists, body.url):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Feed already subscribed")
+class FeedAlreadySubscribedError(Exception):
+    """Raised by discover_and_create_feed when the URL is already subscribed."""
+
+
+class FeedInvalidError(Exception):
+    """Raised by discover_and_create_feed when the URL isn't a valid feed, or fetch failed."""
+
+
+async def discover_and_create_feed(
+    graph: GraphService,
+    url: str,
+    display_name: str | None = None,
+    tags: list[str] | None = None,
+    poll_interval_minutes: int | None = None,
+) -> dict[str, Any]:
+    """Fetch, validate, and create a feed. Shared by the REST subscribe route and the
+    subscribe_feed MCP tool — the discovery/parsing logic lives here once, not twice."""
+    if await asyncio.to_thread(graph.feed_exists, url):
+        raise FeedAlreadySubscribedError(f"Feed already subscribed: {url}")
 
     try:
         async with http_client() as client:
-            response = await safe_get(client, body.url)
+            response = await safe_get(client, url)
         response.raise_for_status()
     except (UnsafeURLError, httpx.HTTPError) as exc:
-        raise _fetch_error_422(exc) from exc
+        prefix = "Refusing to fetch" if isinstance(exc, UnsafeURLError) else "Could not fetch"
+        raise FeedInvalidError(f"{prefix}: {exc}") from exc
 
     try:
         parsed = await asyncio.to_thread(feedparser.parse, response.content)
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Feed parse error: {exc}",
-        ) from exc
+        raise FeedInvalidError(f"Feed parse error: {exc}") from exc
     if not parsed.get("version"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="URL must point to a valid RSS or Atom feed",
-        )
+        raise FeedInvalidError("URL must point to a valid RSS or Atom feed")
     feed_meta = parsed.feed
 
-    feed = await asyncio.to_thread(
+    return await asyncio.to_thread(
         graph.create_feed,
-        url=body.url,
-        title=feed_meta.get("title", body.url),
+        url=url,
+        title=feed_meta.get("title", url),
         description=feed_meta.get("description", ""),
         site_url=feed_meta.get("link", ""),
-        display_name=body.display_name,
-        poll_interval_minutes=body.poll_interval_minutes,
-        tags=body.tags,
+        display_name=display_name,
+        poll_interval_minutes=poll_interval_minutes,
+        tags=tags or [],
     )
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def subscribe(body: FeedCreate, graph: GraphService = Depends(get_graph)) -> dict[str, Any]:
+    try:
+        feed = await discover_and_create_feed(
+            graph, body.url, body.display_name, body.tags, body.poll_interval_minutes
+        )
+    except FeedAlreadySubscribedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except FeedInvalidError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     config = await asyncio.to_thread(effective_config, graph)
     return envelope(feed_response(feed, config))
 

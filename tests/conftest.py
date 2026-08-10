@@ -97,6 +97,58 @@ def authed(reed_client):
 
 
 @pytest.fixture
+def mcp_server(tmp_path, monkeypatch):
+    monkeypatch.setenv("REED_DATA_PATH", str(tmp_path / "test.kuzu"))
+    get_settings.cache_clear()
+
+    from reed.graph import GraphService
+    from reed.mcp_server import create_mcp_server
+    from reed.poller import FeedPoller
+
+    graph = GraphService(str(tmp_path / "test.kuzu"))
+    poller = FeedPoller(graph)
+    server = create_mcp_server(graph, poller)
+    yield server, graph, poller
+    graph.close()
+
+
+def create_test_item(
+    graph,
+    feed_url: str,
+    guid: str,
+    url: str,
+    title: str,
+    summary: str = "",
+    content: str = "",
+    author: str = "",
+    word_count: int = 0,
+    published_at=None,
+    fetched_at=None,
+) -> str:
+    """Test helper wrapping graph.create_item's ten required positional
+    args with sensible defaults. graph.create_item returns a bare item-id
+    string (or None if the guid already existed) — this helper asserts
+    the non-None case, since every test call site in this plan creates a
+    fresh guid. Use this everywhere in place of calling graph.create_item
+    directly; see the plan's Global Constraints note."""
+    now = datetime.now(UTC)
+    item_id = graph.create_item(
+        feed_url=feed_url,
+        guid=guid,
+        url=url,
+        title=title,
+        summary=summary,
+        content=content,
+        author=author,
+        word_count=word_count,
+        published_at=published_at or now,
+        fetched_at=fetched_at or now,
+    )
+    assert item_id is not None
+    return item_id
+
+
+@pytest.fixture
 def subscribed_feed(authed, reed_client):
     """Subscribe to a feed and ingest SAMPLE_RSS; returns the feed object."""
     from reed.poller import FeedPoller

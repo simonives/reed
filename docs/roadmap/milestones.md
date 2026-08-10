@@ -244,7 +244,7 @@ Reed becomes an AI-native reading tool. Concurrent with M5 after M4.
 ### Scope
 
 **MCP server implementation**
-- All 21 tools from `docs/architecture/mcp-server.md` implemented via FastMCP
+- All 27 tools from `docs/architecture/mcp-server.md` implemented via FastMCP
 - Tool input/output schemas matching the spec
 - stdio transport for local AI clients (Claude Desktop, Cursor)
 - HTTP/SSE transport for networked or remote clients

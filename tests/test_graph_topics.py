@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from reed.graph import GraphService
+from tests.conftest import create_test_item
 
 
 @pytest.fixture
@@ -479,3 +480,52 @@ class TestGetTopicItems:
         topics, _ = graph.get_topics()
         items = graph.get_topic_items(topics[0]["id"])
         assert items[0]["tags"] == ["important"]
+
+
+class TestGetTopicByName:
+    def test_returns_topic_by_exact_name(self, graph):
+        graph.create_feed(url="https://f.example.com/rss", title="F", description="", site_url="")
+        item_id = create_test_item(
+            graph,
+            feed_url="https://f.example.com/rss",
+            guid="g1",
+            url="https://f.example.com/1",
+            title="One",
+        )
+        graph.enrich_item(item_id, [("AI Governance", 0.9)])
+        found = graph.get_topic_by_name("AI Governance")
+        assert found is not None
+        assert found["name"] == "AI Governance"
+
+    def test_returns_none_for_unknown_name(self, graph):
+        assert graph.get_topic_by_name("Nonexistent Topic") is None
+
+
+class TestGetTopicTimelineBucket:
+    def test_bucket_month_groups_by_month(self, graph):
+        graph.create_feed(url="https://f.example.com/rss", title="F", description="", site_url="")
+        item_id = create_test_item(
+            graph,
+            feed_url="https://f.example.com/rss",
+            guid="g1",
+            url="https://f.example.com/1",
+            title="One",
+        )
+        graph.enrich_item(item_id, [("AI", 0.9)])
+        topic_id = graph.get_topic_by_name("AI")["id"]
+        timeline = graph.get_topic_timeline(topic_id, bucket="month")
+        assert timeline is not None
+
+    def test_invalid_bucket_raises(self, graph):
+        graph.create_feed(url="https://f.example.com/rss", title="F", description="", site_url="")
+        item_id = create_test_item(
+            graph,
+            feed_url="https://f.example.com/rss",
+            guid="g1",
+            url="https://f.example.com/1",
+            title="One",
+        )
+        graph.enrich_item(item_id, [("AI", 0.9)])
+        topic_id = graph.get_topic_by_name("AI")["id"]
+        with pytest.raises(ValueError):
+            graph.get_topic_timeline(topic_id, bucket="fortnight")

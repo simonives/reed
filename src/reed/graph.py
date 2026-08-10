@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import html as _html
 import json
 import logging
@@ -690,19 +691,29 @@ class GraphService:
         feed_id: str | None,
         tag: str | None,
         unread_only: bool,
-        starred_only: bool,
+        starred: bool | None,
         since: datetime | None,
         until: datetime | None,
+        topic_id: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Build the MATCH...WHERE prefix (feed bound as f, item as i) for item queries."""
+        """Build the MATCH...WHERE prefix (feed bound as f, item as i) for item queries.
+
+        `starred` is a tri-state: None = no filter, True = starred only,
+        False = not-starred only (the "starred: false" semantics documented
+        for the get_items MCP tool but never implemented — M6 baseline gap).
+        """
         clauses: list[str] = []
         params: dict[str, Any] = {}
         if tag is not None:
             params["tag"] = tag
+        if topic_id is not None:
+            params["topic_id"] = topic_id
         if unread_only:
             clauses.append("i.read = false")
-        if starred_only:
+        if starred is True:
             clauses.append("i.starred = true")
+        elif starred is False:
+            clauses.append("i.starred = false")
         if since is not None:
             clauses.append("i.published_at >= $since")
             params["since"] = since
@@ -710,21 +721,22 @@ class GraphService:
             clauses.append("i.published_at <= $until")
             params["until"] = until
 
-        # Starred and tagged views are user-curated: items stay visible after
-        # their feed is removed. Feed-derived views require a live feed edge.
+        item_joins = ""
+        if tag is not None:
+            item_joins += " MATCH (i)-[:TAGGED]->(t:Tag {name: $tag})"
+        if topic_id is not None:
+            item_joins += " MATCH (i)-[:ABOUT]->(tp:Topic {id: $topic_id})"
+
+        # Starred, tagged, and topic-filtered views are user-curated: items
+        # stay visible after their feed is removed. Feed-derived views
+        # require a live feed edge.
         if feed_id is not None:
-            match = "MATCH (f:Feed)-[:HAS_ITEM]->(i:Item)"
-            if tag is not None:
-                match += " MATCH (i)-[:TAGGED]->(t:Tag {name: $tag})"
+            match = "MATCH (f:Feed)-[:HAS_ITEM]->(i:Item)" + item_joins
             clauses.append("f.id = $feed_id")
             params["feed_id"] = feed_id
             optional = ""
-        elif starred_only or tag is not None:
-            match = (
-                "MATCH (i:Item)-[:TAGGED]->(t:Tag {name: $tag})"
-                if tag is not None
-                else "MATCH (i:Item)"
-            )
+        elif starred is not None or tag is not None or topic_id is not None:
+            match = "MATCH (i:Item)" + item_joins
             # WHERE must precede OPTIONAL MATCH or it would filter only the
             # optional pattern
             optional = " OPTIONAL MATCH (f:Feed)-[:HAS_ITEM]->(i)"
@@ -746,7 +758,9 @@ class GraphService:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
-        prefix, params = self._item_filters(feed_id, tag, unread_only, starred_only, since, until)
+        prefix, params = self._item_filters(
+            feed_id, tag, unread_only, True if starred_only else None, since, until
+        )
         count_rows = _rows(self._execute(f"{prefix} RETURN count(DISTINCT i) AS total", params))
         total = int(count_rows[0]["total"]) if count_rows else 0
         result = self._execute(
@@ -771,15 +785,18 @@ class GraphService:
         feed_id: str | None = None,
         tag: str | None = None,
         unread_only: bool = False,
-        starred_only: bool = False,
+        starred: bool | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 50,
         cursor_ts: datetime | None = None,
         cursor_guid: str | None = None,
+        topic_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Keyset-paginated item list. cursor_ts+cursor_guid encode the last-seen position."""
-        prefix, params = self._item_filters(feed_id, tag, unread_only, starred_only, since, until)
+        prefix, params = self._item_filters(
+            feed_id, tag, unread_only, starred, since, until, topic_id
+        )
         cursor_clause = ""
         if cursor_ts is not None and cursor_guid is not None:
             # Insert a WITH bridge so the cursor predicate is always a fresh WHERE,
@@ -966,6 +983,26 @@ class GraphService:
         count_rows = _rows(self._execute(f"{match} {where} RETURN count(i) AS total", params))
         total = int(count_rows[0]["total"]) if count_rows else 0
         self._execute(f"{match} {where} SET i.read = true", params)
+        return total
+
+    def mark_read_by_ids(self, item_ids: list[str]) -> int:
+        """Bulk mark-read by explicit id list, single query (no per-id loop —
+        the original design looped update_item_state per id, which gave no
+        atomicity guarantee and was needlessly slow; adversarial review on
+        the M6 design flagged this before implementation started)."""
+        if not item_ids:
+            return 0
+        count_rows = _rows(
+            self._execute(
+                "MATCH (i:Item) WHERE i.id IN $ids AND i.read = false RETURN count(i) AS total",
+                {"ids": item_ids},
+            )
+        )
+        total = int(count_rows[0]["total"]) if count_rows else 0
+        self._execute(
+            "MATCH (i:Item) WHERE i.id IN $ids SET i.read = true",
+            {"ids": item_ids},
+        )
         return total
 
     def save_reader_content(self, item_id: str, content: str, fetched_at: datetime) -> None:
@@ -1165,6 +1202,31 @@ class GraphService:
             {"id": item_id, "body": body},
         )
         return self.get_note(item_id)
+
+    def append_note(self, item_id: str, block: str) -> dict[str, Any] | None:
+        """Append a timestamped block to an item's note, creating it if absent.
+
+        Distinct from put_note/annotate_item, which *replace* the note —
+        an LLM client accumulating findings across a research session
+        should never silently clobber what's already there (M6 design).
+
+        Unlike replace semantics, where a race between two writers just
+        picks a winner, this is Reed's first accumulate-semantics API: an
+        unlocked read-then-write here would let a concurrent writer's
+        update be silently lost rather than merely overwritten with an
+        equally-valid value. Holds `_conn_lock` across the full
+        get_note/put_note body, following the same pattern as
+        recompute_derived_edges (#168) and restore_data (#124); `_conn_lock`
+        is a threading.RLock and `_execute` already takes the same lock, so
+        nesting into get_note/put_note's own internal acquisitions is safe."""
+        with self._conn_lock:
+            if self._item_guid(item_id) is None:
+                return None
+            existing = self.get_note(item_id)
+            timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+            entry = f"[{timestamp}] {block}"
+            body = f"{existing['body']}\n\n{entry}" if existing else entry
+            return self.put_note(item_id, body)
 
     def delete_note(self, item_id: str) -> bool:
         if self.get_note(item_id) is None:
@@ -1556,19 +1618,120 @@ class GraphService:
             )
         )
 
-    def get_topics(self, limit: int = 50, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    def get_topics(
+        self, limit: int = 50, offset: int = 0, sort: str = "item_count"
+    ) -> tuple[list[dict[str, Any]], int]:
+        """List topics, sorted by item_count (default) or centrality.
+
+        centrality uses Kuzu's algo extension (PageRank) over a Topic-only
+        projected graph on RELATED_TO edges. The projection is a catalog
+        object, so creation is idempotent (drop-before-create) and the whole
+        block holds `_conn_lock` for the same reason `recompute_derived_edges`
+        does (#168): the projection's create/query/drop sequence must not be
+        interleaved with a concurrent `close()` or another catalog write on
+        the single shared `Connection`.
+
+        KNOWN LIMITATION (#206): RELATED_TO edges are canonicalized
+        t1.id < t2.id purely to prevent duplicate MERGEs in
+        recompute_derived_edges — that ordering carries no real semantic
+        direction, it's arbitrary UUID comparison. Kuzu's project_graph/
+        page_rank treats the edge as directed regardless, and PageRank
+        concentrates rank at "sink" (target) nodes. Verified empirically: a
+        topic that happens to be a pure *source* in all its RELATED_TO edges
+        (never the canonically-larger id) scores identically to a topic with
+        zero edges at all — real connectivity can be rank-invisible purely
+        on UUID luck. No undirected/symmetrized projection option was found
+        in kuzu==0.11.3 that avoids this without a data-model change (see
+        #206 for what was tried and ruled out). Treat centrality as
+        suggestive, not authoritative — especially for low-degree topics,
+        where this bias is most likely to flip the ordering.
+        """
+        if sort not in ("item_count", "centrality"):
+            raise ValueError(f"sort must be 'item_count' or 'centrality', got: {sort}")
         count_rows = _rows(self._execute("MATCH (t:Topic) RETURN count(t) AS total"))
         total = int(count_rows[0]["total"]) if count_rows else 0
-        rows = _rows(
-            self._execute(
-                "MATCH (t:Topic) "
-                "RETURN t.id AS id, t.name AS name, t.item_count AS item_count "
-                "ORDER BY t.item_count DESC "
-                "SKIP $offset LIMIT $limit",
-                {"offset": offset, "limit": limit},
+        if sort == "item_count":
+            rows = _rows(
+                self._execute(
+                    "MATCH (t:Topic) "
+                    "RETURN t.id AS id, t.name AS name, t.item_count AS item_count "
+                    "ORDER BY t.item_count DESC "
+                    "SKIP $offset LIMIT $limit",
+                    {"offset": offset, "limit": limit},
+                )
             )
+            return rows, total
+        with self._conn_lock:
+            self._drop_projected_graph_if_exists("topic_centrality")
+            self._execute("CALL project_graph('topic_centrality', ['Topic'], ['RELATED_TO'])")
+            try:
+                rank_rows = _rows(
+                    self._execute(
+                        "CALL page_rank('topic_centrality') "
+                        "RETURN node.id AS id, node.name AS name, "
+                        "node.item_count AS item_count, rank "
+                        "ORDER BY rank DESC SKIP $offset LIMIT $limit",
+                        {"offset": offset, "limit": limit},
+                    )
+                )
+            finally:
+                self._drop_projected_graph_if_exists("topic_centrality")
+        return (
+            [{"id": r["id"], "name": r["name"], "item_count": r["item_count"]} for r in rank_rows],
+            total,
         )
-        return rows, total
+
+    def _drop_projected_graph_if_exists(self, name: str) -> None:
+        """Drop a projected graph catalog object, tolerating "doesn't exist".
+
+        Kuzu's `drop_projected_graph` raises a RuntimeError (not a no-op) when
+        the name was never projected, verified empirically against the
+        installed kuzu==0.11.3 — so the guard here is a real try/except, not
+        the `RETURN *`-based no-op the initial design sketch assumed (which
+        also turns out not to be valid syntax for this table function at all:
+        Kuzu rejects `CALL drop_projected_graph(...) RETURN *` outright,
+        independent of whether the name exists).
+        """
+        with contextlib.suppress(RuntimeError):
+            self._execute(f"CALL drop_projected_graph('{name}')")
+
+    def get_topic_clusters(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Group topics into clusters via Louvain community detection over
+        the Topic-only projected graph on RELATED_TO edges. See get_topics'
+        centrality branch for the locking/idempotency rationale — identical
+        here.
+
+        Shares get_topics' #206 directed-edge artifact (RELATED_TO's
+        canonical direction is arbitrary), but community detection is
+        structurally less sensitive to it than a scalar rank: which
+        connected topics land in the same community doesn't depend on which
+        endpoint sorts as source vs sink. Not separately verified in depth;
+        tracked as part of #206's eventual fix, not urgent on its own.
+        """
+        count_rows = _rows(self._execute("MATCH (t:Topic) RETURN count(t) AS total"))
+        if not count_rows or int(count_rows[0]["total"]) == 0:
+            return []
+        with self._conn_lock:
+            self._drop_projected_graph_if_exists("topic_clusters")
+            self._execute("CALL project_graph('topic_clusters', ['Topic'], ['RELATED_TO'])")
+            try:
+                rows = _rows(
+                    self._execute(
+                        "CALL louvain('topic_clusters') "
+                        "RETURN node.id AS id, node.name AS name, "
+                        "louvain_id AS cluster_id "
+                        "ORDER BY cluster_id, node.name LIMIT $limit",
+                        {"limit": limit},
+                    )
+                )
+            finally:
+                self._drop_projected_graph_if_exists("topic_clusters")
+        clusters: dict[int, list[dict[str, Any]]] = {}
+        for row in rows:
+            clusters.setdefault(row["cluster_id"], []).append(
+                {"id": row["id"], "name": row["name"]}
+            )
+        return [{"cluster_id": cid, "topics": topics} for cid, topics in clusters.items()]
 
     def get_topic(self, topic_id: str) -> dict[str, Any] | None:
         rows = _rows(
@@ -1584,6 +1747,16 @@ class GraphService:
         topic["related"] = self.get_related_topics(topic_id)
         return topic
 
+    def get_topic_by_name(self, name: str) -> dict[str, Any] | None:
+        rows = _rows(
+            self._execute(
+                "MATCH (t:Topic {name: $name}) "
+                "RETURN t.id AS id, t.name AS name, t.item_count AS item_count",
+                {"name": name},
+            )
+        )
+        return rows[0] if rows else None
+
     def get_related_topics(self, topic_id: str, limit: int = 20) -> list[dict[str, Any]]:
         return _rows(
             self._execute(
@@ -1593,6 +1766,40 @@ class GraphService:
                 {"topic_id": topic_id, "limit": limit},
             )
         )
+
+    def find_connection_path(
+        self, from_id: str, to_id: str, from_type: str = "item", max_topic_hops: int = 3
+    ) -> list[dict[str, Any]] | None:
+        """Shortest path between two items (or an item and a topic) via
+        ABOUT/RELATED_TO edges. max_topic_hops is expressed in topic hops and
+        doubled internally, because ABOUT is bipartite — an item-to-item path
+        always has an even raw hop count (item-topic-item, minimum). Result
+        count is capped to avoid ALL SHORTEST fanning out through a hub topic.
+        """
+        raw_hops = max_topic_hops * 2
+        label = "Item" if from_type == "item" else "Topic"
+        result = self._execute(
+            f"""
+            MATCH p = (a:{label} {{id: $from_id}})
+                -[:ABOUT|RELATED_TO* ALL SHORTEST 1..{raw_hops}]-
+                (b:Item {{id: $to_id}})
+            RETURN nodes(p) AS path_nodes
+            LIMIT 5
+            """,
+            {"from_id": from_id, "to_id": to_id},
+        )
+        rows = _rows(result)
+        if not rows:
+            return None
+        nodes = rows[0]["path_nodes"]
+        return [
+            {
+                "type": n["_label"],
+                "id": n["id"],
+                "name": n.get("title") or n.get("name"),
+            }
+            for n in nodes
+        ]
 
     def topic_exists(self, topic_id: str) -> bool:
         rows = _rows(
@@ -1815,6 +2022,24 @@ class GraphService:
             row["tags"] = tags_by_guid.get(row["guid"], [])
         return rows
 
+    def list_authors(self, limit: int = 50) -> list[dict[str, Any]]:
+        rows = _rows(
+            self._execute(
+                """
+                MATCH (i:Item)
+                WHERE i.author IS NOT NULL AND i.author <> ''
+                RETURN i.author AS author, count(i) AS item_count,
+                       max(coalesce(i.published_at, i.fetched_at)) AS last_seen
+                ORDER BY item_count DESC
+                LIMIT $limit
+                """,
+                {"limit": limit},
+            )
+        )
+        for row in rows:
+            row["last_seen"] = row["last_seen"].isoformat() if row["last_seen"] else None
+        return rows
+
     def get_author_items(
         self,
         author_name: str,
@@ -1853,13 +2078,17 @@ class GraphService:
             row["tags"] = tags_by_guid.get(row["guid"], [])
         return rows
 
-    def get_topic_timeline(self, topic_id: str) -> list[dict[str, Any]] | None:
+    def get_topic_timeline(
+        self, topic_id: str, bucket: str = "week"
+    ) -> list[dict[str, Any]] | None:
+        if bucket not in ("week", "month"):
+            raise ValueError(f"bucket must be 'week' or 'month', got: {bucket}")
         rows = _rows(
             self._execute(
-                """
-                MATCH (i:Item)-[:ABOUT]->(t:Topic {id: $topic_id})
-                RETURN date_trunc('week', i.published_at) AS week, count(i) AS count
-                ORDER BY week ASC
+                f"""
+                MATCH (i:Item)-[:ABOUT]->(t:Topic {{id: $topic_id}})
+                RETURN date_trunc('{bucket}', i.published_at) AS period, count(i) AS count
+                ORDER BY period ASC
                 """,
                 {"topic_id": topic_id},
             )

@@ -235,6 +235,29 @@ Returns unread items similar to the user's starred items. The "Discover" view in
 
 ---
 
+#### `find_path`
+Finds how two items (or an item and a topic) connect through the graph — the answer to "how does this relate to that."
+
+**Input:**
+```json
+{
+  "from_id": "uuid",
+  "to_id": "uuid",
+  "from_type": "item",
+  "max_topic_hops": 3
+}
+```
+
+`from_type` is `"item"` or `"topic"`. `max_topic_hops` must be `>= 1`.
+
+**Output:** `{ "path": [ ... ] }` — an ordered list of nodes/edges connecting the two, or an empty list if no connection is found within `max_topic_hops`.
+
+Traversal follows `ABOUT`/`RELATED_TO` edges only — it is topic-based, not similarity-based, and deliberately excludes `SIMILAR_TO`. An empty path does not mean the two are unrelated by similarity, only that they don't share a topic chain within the hop budget.
+
+**Typical AI use:** "How does this article connect to that one?"
+
+---
+
 #### `explore_topic`
 Returns items about a topic, plus related topics, ordered by weight.
 
@@ -341,6 +364,49 @@ Full-text search across items and notes.
 
 ---
 
+### Discovery tools
+
+Cheap enumeration tools for orienting an AI client before it starts traversing — "what topics/tags/authors exist in this library at all."
+
+#### `list_topics`
+Lists all topics.
+
+**Input:**
+```json
+{ "limit": 50, "offset": 0, "sort": "item_count" }
+```
+
+`sort` is `"item_count"` (default, most-covered first) or `"centrality"` (PageRank over the topic co-occurrence graph). Known limitation (reed#206): centrality is biased by an arbitrary edge-direction artifact and can understate low-degree topics' real connectivity — treat it as suggestive, not authoritative.
+
+---
+
+#### `list_tags`
+Lists all tags with item counts.
+
+**Input:** None
+
+---
+
+#### `list_authors`
+Lists authors by item count, most-published first.
+
+**Input:**
+```json
+{ "limit": 50 }
+```
+
+---
+
+#### `get_topic_clusters`
+Groups topics into clusters via Louvain community detection on the topic co-occurrence graph — free topic clustering the flat keyword extraction otherwise lacks. The client names the clusters semantically.
+
+**Input:**
+```json
+{ "limit": 50 }
+```
+
+---
+
 ### Export tools
 
 #### `export_opml`
@@ -349,6 +415,46 @@ Returns the user's feed list as an OPML string.
 **Input:** None
 
 **Output:** `{ "opml": "<opml>...</opml>" }`
+
+---
+
+### Research tools
+
+Tools that package graph context for an AI client's own research, rather than duplicating web search or fact-finding inside Reed.
+
+#### `capture_external_finding`
+Appends an external research finding to an item's note — the answer to "go look this up outside Reed," without Reed doing the searching itself. Unlike `annotate_item`, this *appends* a timestamped block rather than replacing the note, so a client accumulating findings across a research session never silently clobbers what's already there. Findings become searchable via the `search` tool afterwards.
+
+**Input:**
+```json
+{
+  "item_id": "uuid",
+  "url": "https://example.gov/reg-123",
+  "title": "New regulation text",
+  "summary": "Full text of the regulation referenced in this article.",
+  "tags": ["optional", "tags"]
+}
+```
+
+---
+
+#### `build_research_brief`
+Packages an item's full graph context into one call — the item itself, its topics, similar items, and other items by the same author — to prime the client's own web research rather than duplicating it in Reed.
+
+**Input:**
+```json
+{ "item_id": "uuid" }
+```
+
+**Output:**
+```json
+{
+  "item": { ... },
+  "topics": [ ... ],
+  "similar_items": [ ... ],
+  "same_author_items": [ ... ]
+}
+```
 
 ---
 
@@ -363,6 +469,23 @@ Triggers derived edge recomputation asynchronously.
 **Input:** None
 
 **Output:** `{ "job_id": "uuid", "status": "queued" }`
+
+The returned `job_id` is not currently associated with any queryable task status — there is no tool to poll it against; treat this as fire-and-forget.
+
+---
+
+## Resources and prompts
+
+#### Resource: `reed://graph/overview`
+A one-shot orientation snapshot: feed/item/unread/topic counts, top topics, and top authors. Useful as the first call in a session to ground an AI client in the shape of the library before it starts traversing.
+
+#### Prompts
+
+Three guided-workflow prompts package the traversal patterns below into ready-made instructions a client can invoke directly:
+
+- **`deep_reading_session`** — unread items, read one, find related, mark read.
+- **`weekly_digest`** — what's new, what themes are covered, what matches past interests.
+- **`research_thread`** — search a topic, expand via similarity, map related topics, annotate.
 
 ---
 
@@ -398,7 +521,11 @@ The most powerful use of the Reed MCP server is chaining tools in sequence. An A
 |---|---|---|
 | Feeds | `list_feeds`, `get_feed`, `subscribe_feed`, `refresh_feed` | 3 read, 1 write |
 | Items | `get_items`, `get_item`, `mark_read`, `mark_starred`, `tag_item`, `annotate_item` | 2 read, 4 write |
-| Graph traversal | `find_similar_items`, `find_adjacent_to_starred`, `explore_topic`, `get_author_items`, `get_topic_timeline`, `get_feed_health`, `search` | 7 read |
+| Graph traversal | `find_similar_items`, `find_adjacent_to_starred`, `find_path`, `explore_topic`, `get_author_items`, `get_topic_timeline`, `get_feed_health`, `search` | 8 read |
+| Discovery | `list_topics`, `list_tags`, `list_authors`, `get_topic_clusters` | 4 read |
 | Export | `export_opml` | 1 read |
+| Research | `capture_external_finding`, `build_research_brief` | 1 read, 1 write |
 | Config | `get_config`, `trigger_recompute` | 1 read, 1 write |
-| **Total** | **21 tools** | **14 read, 6 write** |
+| **Total** | **27 tools** | **20 read, 7 write** |
+
+Plus one resource (`reed://graph/overview`) and three prompts (`deep_reading_session`, `weekly_digest`, `research_thread`) — see "Resources and prompts" above.

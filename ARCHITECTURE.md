@@ -120,7 +120,7 @@ When implemented, these derived edges will make traversal from an MCP client gen
 The primary interface. Serves the web UI, handles all CRUD for feeds and items, exposes read state and search. OpenAPI docs available at `/docs`. All endpoints require the configured API key (passed as a header).
 
 **MCP Server (FastMCP)**
-Runs alongside the API in the same process. Exposes graph traversal tools to any MCP-compatible AI client. Tool surface includes: read feeds, read items, traverse topics, find related items, search by keyword, mark read/starred.
+Runs alongside the API in the same process. Exposes graph traversal tools to any MCP-compatible AI client. 27 tools across feeds, items, graph traversal (including cross-node path-finding), topic/tag/author discovery, export, research (external finding capture, research briefs), and config, plus an orientation resource and three guided-workflow prompts — see `docs/architecture/mcp-server.md` for the full inventory.
 
 **Graph Service**
 A Python module wrapping all Kuzu interactions. The API and MCP server both import this — neither touches Kuzu directly. This is the single seam between the application logic and the data layer.

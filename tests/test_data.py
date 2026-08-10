@@ -374,7 +374,7 @@ class TestExportOrphanedItems:
             self._seed_item(gs, starred=True)
             backup = gs.export_data()
             gs.restore_data(backup)
-            items = gs.list_items_cursor(starred_only=True)
+            items = gs.list_items_cursor(starred=True)
             assert any(i["guid"] == "g1" for i in items)
         finally:
             gs.close()

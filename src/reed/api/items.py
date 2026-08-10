@@ -85,7 +85,7 @@ def list_items(
         feed_id=feed_id,
         tag=tag,
         unread_only=unread,
-        starred_only=starred,
+        starred=True if starred else None,
         since=since,
         until=until,
         limit=limit,

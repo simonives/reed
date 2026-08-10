@@ -16,7 +16,11 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "kuzu>=0.7",
-    "fastmcp>=2.0",
+    # fastmcp.server.create_proxy and mcp.http_app(path=..., middleware=[...])
+    # (used in mcp_server.py / main.py) only exist in fastmcp 3.x, not 2.x.
+    # Dockerfile installs via `pip install .` with no lockfile, so this floor
+    # is the actual contract for the distributed image.
+    "fastmcp>=3.4,<4",
     "feedparser>=6.0",
     # http.py builds a pinned transport on httpx/httpcore internals (an SSRF
     # guard); pin both so an upgrade that moves them is caught, not silent.
