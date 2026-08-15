@@ -135,6 +135,20 @@ Resolved items are removed from this list and captured in the relevant design or
 
 ---
 
+## User-maintained watch list (external-context alerting)
+
+**Question:** Should Reed support a user-maintained "watch list" — a standing set of topics/entities/descriptions of interest (Simon's examples, 2026-08-15: "the Fair Work Act is updated," "content relates to a specific employer's business or assets," "a topic relates to an enterprise agreement term," "a topic relates to a feature in a software system I use") that flags new incoming items matching those concerns, regardless of which feed or topic-extraction path they arrived through?
+
+**Affects:** Likely a new node type (a WatchItem or similar: topic/entity/description + match criteria), a new evaluation step in the ingestion pipeline (every newly-ingested item needs to be checked against the watch list, not just topic-extracted), a notification/flagging surface (how does a match actually reach the user — a flag on the item, a digest, a push?), and possibly new MCP tools for managing the list itself.
+
+**Context:** Raised by Simon (2026-08-15) while scoping the M7→v1.0.0 punch list, explicitly as "a must-have in the future," not immediately scoped to a milestone. The framing is important: everything Reed does today is *reactive to its own ingested content* — poll feeds, extract topics from what arrived, traverse relationships within that corpus. A watch list inverts this: the user declares interest *before* content exists, and every new item gets evaluated against standing concerns independent of which feed produced it.
+
+**Likely overlap with [issue #205](https://github.com/simonives/reed/issues/205) (scheduled AI web-scanning/discovery), not yet resolved:** the watch list's scope genuinely depends on whether it's meant to match only against feeds Reed already subscribes to, or against the wider internet. "Flag me if the Fair Work Act is updated" doesn't care whether that update appears in a feed Simon already follows — if the watch list is meant to catch it regardless, it's not a smaller, separate feature next to #205's scheduled discovery subsystem, it *is* that feature (or a specific alerting mode of it). If it's scoped only to existing subscribed feeds, it's a much more contained addition: a saved-query/alert layer over content already being ingested, no new external dependency, fits the current architecture (poller → topic extraction → a new match/flag step). This scope question needs resolving in whatever `/brainstorming` session picks this up — possibly the same session that picks up #205, not necessarily a separate one.
+
+**Recommendation pending:** Not scoped to a milestone. Needs its own `/brainstorming` pass (or a joint one with #205, given the likely overlap) — not a blocker for RC1, M7, or v1.0.0's currently-agreed scope.
+
+---
+
 ## Resolved decisions (moved here for reference)
 
 | Decision | Resolved in |
