@@ -19,7 +19,7 @@ Current milestone: **M6 — MCP server (complete)**. Starting **M7 — v1.0.0** 
 | M4 | Graph alive | Complete (derived edges + graph query endpoints deliberately deferred to M5 sub-project 1 — see below) |
 | M5 | API and integrations complete | Complete — all four sub-projects merged (2026-08-08) |
 | M6 | MCP server | **Complete** — merged (PR #229, 2026-08-10) |
-| M7 | v1.0.0 | **Starting next** |
+| M7 | v1.0.0 | **In progress** — see below |
 
 M4 phase breakdown:
 
@@ -61,7 +61,22 @@ Also fixed this session: **#182** (untracked high-severity Dependabot alert on `
 
 **Not yet done:** a live Claude Desktop reading session through the stdio bridge — the milestone's own "done means a complete reading session conducted entirely through Claude Desktop, zero UI" criterion — requires an actual Claude Desktop client and could not be performed in the agent environment that built M6. Simon should verify this manually before treating M6 as fully proven end-to-end, though the branch itself is merged and CI-green.
 
-Active session plan: M6 is complete. M7 (v1.0.0) is next — not yet scoped. **Before starting new build work, review the open-issue backlog (now grown further with M6's follow-ups — was 68 as of 2026-08-08) — Simon flagged it's growing long and wants to make sure tech-debt isn't compounding faster than it's resolved.** Simon's call on ordering. See Expiry for the refresh trigger on this subsection.
+**M7 — in progress.** Decomposed into four sub-projects (same pattern as M5):
+
+| Sub-project | Scope | Status |
+|---|---|---|
+| 1. Distribution & SBOM | Fix and verify the never-fired `release.yml` release pipeline (GHCR, PyPI, both SBOMs), safely via a `workflow_dispatch` dry-run mechanism | **Paused mid-fix-wave** — spec and plan on disk (`docs/superpowers/specs/2026-08-11-m7-distribution-sbom-design.md`, gitignored), all 9 planned+discovered tasks implemented and task-reviewed clean on branch `feat/m7-distribution-sbom`, live dry-run verification succeeded end-to-end (found and fixed 4 real bugs along the way: Python version mismatch, invalid `cyclonedx-py` flag, missing CI-time dependency, unsanitized `github.ref_name` in filenames). Final whole-branch review returned "ready to merge, with fixes" (5 Important findings, all agreed with Simon) — **not yet applied**, paused 2026-08-15 to prioritise #241/RC1 work instead |
+| 2. Documentation completeness | README real quickstart (currently has a literal placeholder sentence and a stale M5 status line), CHANGELOG backfill, CONTRIBUTING/CODE_OF_CONDUCT final pass | Not started |
+| 3. Website | VitePress site content (hero/features copy exists; body explicitly marked "coming in v1.0.0"), GitHub Pages live via `pages.yml` | Not started |
+| 4. Repository | Make repo public, real `v1.0.0` tag, GitHub Release | Not started — gated on sub-projects 1-3, plus Simon's Claude Desktop verification (above) and the go-live gate below |
+
+**RC1 — a new, distinct milestone Simon introduced 2026-08-15: a personal-use checkpoint, separate from and prerequisite to the public v1.0.0 release.** Built and run locally (`docker build` off the M7 branch, not the unfinished release pipeline — RC1 does not depend on sub-project 1 being finished). Confirmed working end-to-end against a real 52-feed/4,751-item personal OPML import (feeds, items, search, topics, MCP tools all live-tested), running at `~/reed-local/` outside any git worktree so it survives branch cleanup. **RC1's only currently-known blocker is issue #241** (below) — once fixed, RC1 is considered stable for daily personal use, independent of the rest of M7.
+
+**Issue #241 (priority, blocks RC1) — `SIMILAR_TO` derived-edge recompute has unbounded combinatorial blowup from corpus-dominant topics.** Found live during RC1 dogfooding: 15+ minutes, 6.6GB+ memory (87% of a 7.66GB container limit), on the real 4,751-item personal library, ending in an ungraceful SIGKILL when Docker's stop grace period expired mid-computation. Root cause confirmed by direct read-only query of the live database (not guessed): one topic, `"hosted on acast"` (a podcast hosting-platform boilerplate phrase repeated on every episode of one feed), has `item_count = 1444` and alone accounts for 88.7% of the join's total combinatorial cost — `RELATED_TO` is unaffected (its join is naturally bounded by YAKE's 10-keywords-per-item cap; `SIMILAR_TO`'s is not). Full `/brainstorming` session completed 2026-08-15 — spec approved and on disk (`docs/superpowers/specs/2026-08-15-similar-to-topic-dominance-cap-design.md`, gitignored): a percentage-of-corpus + absolute-floor exclusion on `SIMILAR_TO`'s query only, two new configurable settings (`similarity_max_topic_share`, `similarity_topic_share_floor`), no backfill needed (mark-and-sweep self-heals). **Implementation not yet started** — next step is `/writing-plans`, paused for Simon's go-ahead per his explicit instruction not to auto-proceed past the spec. Extraction-time boilerplate hygiene (the complementary, deliberately-deferred fix) tracked separately as **#241's own follow-up**, not filed as a numbered issue yet.
+
+**Issue #242 (priority, blocks public v1.0.0, does NOT block RC1) — single-key auth model needs review for public cloud hosting.** Raised by Simon while planning v1.0.0: `ARCHITECTURE.md` already commits to one-click Railway/Render/Fly.io deployment as a target, but the current auth model (single static `X-API-Key`, empty key = silent open-access "dev mode") was reasoned about for a LAN-bound self-hosted threat model, not a public-internet-reachable one. Concrete gaps identified (not yet solutioned, needs its own dedicated `/brainstorming` session per the same pattern as #241): silent open access on a misconfigured public deploy, no rate-limiting/brute-force protection, TLS/HTTPS requirement undocumented, M6 security review's DNS-rebinding reasoning needs revisiting for the internet-exposed case, and `fly.toml`/`render.yaml` are promised in `ARCHITECTURE.md` but don't exist.
+
+Active session plan: two-tier punch list, agreed with Simon 2026-08-15 — **RC1 bar:** fix #241, keep dogfooding. **v1.0.0 public bar:** RC1 bar, plus finish M7 sub-projects 1-4, plus resolve #242. Immediate next step (paused, awaiting Simon): `/writing-plans` for #241's approved spec. **Before broader new build work, still review the open-issue backlog (103 open as of 2026-08-15: 74 tech-debt, 17 bug, 8 performance, 2 security, 2 enhancement, 1 needs-triage) — Simon flagged this previously and it has only grown.** See Expiry for the refresh trigger on this subsection.
 
 **Architecture**
 
@@ -217,6 +232,6 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
 
 ## Expiry
 
-- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-08-10, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
+- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-08-15, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
 - Pinned model versions (Sonnet 4.6, Opus 4.8, Gemini 3.1 Pro (High)) — owner: Simon, last-verified: 2026-07-25, refresh interval: whenever a named model is superseded or Simon changes routing.
 - Issue #31 reference (primary-key won't-fix) — stable design decision, not perishable; no refresh trigger.
