@@ -1073,7 +1073,12 @@ class GraphService:
             )
         )
         for r in rows:
-            r["config"] = json.loads(r["config"]) if r["config"] else {}
+            # `or {}` guards a pre-existing row whose config was persisted
+            # as the JSON string "null" (#185, before update_share_target
+            # started rejecting an explicit null) — json.loads("null")
+            # returns None, which downstream code (e.g. _redact_target)
+            # expects to be a dict.
+            r["config"] = (json.loads(r["config"]) if r["config"] else {}) or {}
         return rows
 
     def get_share_target(self, target_id: str) -> dict[str, Any] | None:
@@ -1088,7 +1093,7 @@ class GraphService:
         if not rows:
             return None
         target = rows[0]
-        target["config"] = json.loads(target["config"]) if target["config"] else {}
+        target["config"] = (json.loads(target["config"]) if target["config"] else {}) or {}
         return target
 
     def create_share_target(self, type: str, name: str, config: dict[str, Any]) -> dict[str, Any]:

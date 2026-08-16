@@ -105,7 +105,7 @@ def _redact_target(target: dict[str, Any]) -> dict[str, Any]:
     # in devtools/network history/proxy logs for no reason.
     redacted = dict(target)
     redacted["config"] = {
-        k: v for k, v in target["config"].items() if k not in _SENSITIVE_CONFIG_KEYS
+        k: v for k, v in (target.get("config") or {}).items() if k not in _SENSITIVE_CONFIG_KEYS
     }
     return redacted
 
@@ -140,6 +140,19 @@ def update_share_target(
 ) -> dict[str, Any]:
     fields = body.model_dump(exclude_unset=True)
     if "config" in fields:
+        if fields["config"] is None:
+            # #185 — an explicit `config: null` used to fall through
+            # _validate_config's `elif config:` branch (None is falsy) and
+            # get persisted verbatim as the JSON string "null", which then
+            # crashed every subsequent GET /share/targets in
+            # _redact_target (`None.items()`) with no UI recovery path.
+            # Reject it outright rather than silently accepting a value
+            # that can never be a valid config.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="config cannot be null — omit the field to leave it unchanged, "
+                "or send {} to clear it",
+            )
         existing = graph.get_share_target(target_id)
         if existing is not None:
             fields["config"] = _validate_config(existing["type"], fields["config"])

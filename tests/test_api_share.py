@@ -220,6 +220,53 @@ class TestUpdateShareTarget:
         r = reed_client.patch("/api/v1/share/targets/some-id", json={"name": "X"})
         assert r.status_code == 401
 
+    def test_explicit_null_config_is_rejected_not_persisted(self, authed):
+        """#185 — PATCH {"config": null} against a seeded copy_link/copy_markdown
+        target used to pass through _validate_config's `elif config:` branch
+        (None is falsy, so it fell through and returned None unchanged),
+        persisting the literal string "null" via json.dumps(None). Every
+        subsequent GET /share/targets then hit AttributeError in
+        _redact_target (`None.items()`) — a single PATCH permanently broke
+        the whole list endpoint, with no UI recovery path since delete and
+        recreate are both blocked for copy-type targets. Must now reject
+        an explicit null with a 422 instead of persisting it."""
+        targets = authed.get("/api/v1/share/targets").json()["data"]
+        copy_target = next(t for t in targets if t["type"] == "copy_link")
+
+        r = authed.patch(
+            f"/api/v1/share/targets/{copy_target['id']}",
+            json={"config": None},
+        )
+        assert r.status_code == 422
+
+        # The list endpoint must still work — the bad request must not have
+        # poisoned the stored row.
+        r = authed.get("/api/v1/share/targets")
+        assert r.status_code == 200
+
+    def test_redact_target_tolerates_a_null_config_from_an_already_poisoned_row(self, authed):
+        """Defence in depth for #185: even if a row somehow already has
+        config stored as the literal string "null" (e.g. from before this
+        fix, on an existing install), _redact_target must not crash — it
+        should treat a null config the same as an empty one."""
+        from reed.graph import GraphService
+
+        graph: GraphService = authed.app.state.graph
+        targets = authed.get("/api/v1/share/targets").json()["data"]
+        copy_target = next(t for t in targets if t["type"] == "copy_link")
+
+        # Simulate a pre-existing poisoned row by writing directly through
+        # the graph service, bypassing the API-level guard being tested above.
+        graph._execute(
+            "MATCH (s:ShareTarget) WHERE s.id = $id SET s.config = $config",
+            {"id": copy_target["id"], "config": "null"},
+        )
+
+        r = authed.get("/api/v1/share/targets")
+        assert r.status_code == 200
+        poisoned = next(t for t in r.json()["data"] if t["id"] == copy_target["id"])
+        assert poisoned["config"] == {}
+
 
 class TestDeleteShareTarget:
     def test_deletes_target(self, authed):
