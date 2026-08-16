@@ -302,7 +302,7 @@ Opens over the current view when `/` is pressed or the search icon is clicked.
 |                                                                  |
 |  AI governance as competitive advantage                          |
 |  Simon Willison's Weblog · 2 weeks ago             [*] Starred   |
-|  Note: "Key framing for the quarterly governance write-up"                |
+|  Note: "Key framing for the quarterly governance write-up"       |
 |  ...organisations that treat **AI governance** seriously now...  |
 |                                                                  |
 |  [Load more results]                                             |
@@ -443,9 +443,9 @@ The note editor appears inline below the article content when `n` is pressed.
 +------------------------------------------------------------------+
 |  Your note                                [Edit]  [x] Dismiss   |
 |                                                                  |
-|  Key framing for the quarterly governance write-up. The               |
+|  Key framing for the quarterly governance write-up. The         |
 |  accountability gap argument is worth pulling into the          |
-|  committee terms of reference discussion.                           |
+|  committee terms of reference discussion.                       |
 |                                                                  |
 |  Saved 10 Jul 2026, 3:42pm                                      |
 +------------------------------------------------------------------+

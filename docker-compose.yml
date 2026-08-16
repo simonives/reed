@@ -9,7 +9,7 @@ services:
     volumes:
       - ./data:/data
     environment:
-      REED_API_KEY: "change-me"
+      REED_API_KEY: ${REED_API_KEY:?Set REED_API_KEY in your .env file}
       REED_DATA_PATH: "/data/reed.kuzu"
       REED_POLL_DEFAULT_INTERVAL: "60"
     restart: unless-stopped

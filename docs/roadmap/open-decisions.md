@@ -137,7 +137,7 @@ Resolved items are removed from this list and captured in the relevant design or
 
 ## User-maintained watch list (external-context alerting)
 
-**Question:** Should Reed support a user-maintained "watch list" — a standing set of topics/entities/descriptions of interest (Simon's examples, 2026-08-15: "the Fair Work Act is updated," "content relates to a specific employer's business or assets," "a topic relates to an enterprise agreement term," "a topic relates to a feature in a software system I use") that flags new incoming items matching those concerns, regardless of which feed or topic-extraction path they arrived through?
+**Question:** Should Reed support a user-maintained "watch list" — a standing set of topics/entities/descriptions of interest (example use cases, 2026-08-15: "a specific piece of legislation is updated," "content relates to a specific employer's business or assets," "a topic relates to a contract or agreement term," "a topic relates to a feature in a software system I use") that flags new incoming items matching those concerns, regardless of which feed or topic-extraction path they arrived through?
 
 **Affects:** Likely a new node type (a WatchItem or similar: topic/entity/description + match criteria), a new evaluation step in the ingestion pipeline (every newly-ingested item needs to be checked against the watch list, not just topic-extracted), a notification/flagging surface (how does a match actually reach the user — a flag on the item, a digest, a push?), and possibly new MCP tools for managing the list itself.
 

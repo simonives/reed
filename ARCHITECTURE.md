@@ -38,11 +38,13 @@
 |---|---|
 | `Feed` | `url` (PK), `id`, `title`, `display_name`, `description`, `site_url`, `poll_interval_minutes`, `reader_mode_enabled`, `is_active`, `subscribed_at`, `last_fetched_at`, `consecutive_errors`, `last_error`, `etag`, `last_modified` |
 | `Item` | `guid` (PK), `id`, `url`, `title`, `summary`, `content`, `author`, `word_count`, `published_at`, `fetched_at`, `read`, `starred`, `reader_content`, `reader_fetched_at` |
+| `Topic` | `id` (PK, UUID), `name`, `item_count` — extracted per-item via YAKE (see `ADR-009`) |
 | `Tag` | `name` (PK, user-defined), `id` (UUID) |
 | `Note` | `id` (PK), `body`, `created_at`, `updated_at` |
 | `Config` | `key` (PK), `value` |
+| `ShareTarget` | `id` (PK, UUID), `name`, `target_type` (webhook, Raindrop.io, copy), `config`, `is_active`, `created_at` |
 
-`author` is stored as a flat `Item.author` string; there is no `Author` node. `Topic` and its derived edges are future work (see below).
+`author` is stored as a flat `Item.author` string; there is no `Author` node.
 
 ### Edges
 
@@ -52,18 +54,13 @@
 | `HAS_NOTE` | Item → Note | An item's user note (1:1) |
 | `TAGGED` | Item → Tag | User-applied tag on an item |
 | `FEED_TAGGED` | Feed → Tag | User-applied tag on a feed |
-
-#### Future (derived graph)
-
-The following edges are not yet implemented. They represent planned AI-assisted enrichment once the core graph is stable:
-
-| Edge | Direction | Description |
-|---|---|---|
-| `ABOUT` | Item → Topic | Topic extracted from item content |
+| `ABOUT` | Item → Topic | Topic extracted from item content (YAKE, up to 10 per item) |
 | `RELATED_TO` | Topic → Topic | Topics co-occurring across items (inferred) |
-| `SIMILAR_TO` | Item → Item | Items sharing topic nodes (inferred) |
+| `SIMILAR_TO` | Item → Item | Items sharing topic nodes above a similarity threshold (inferred) |
 
-When implemented, these derived edges will make traversal from an MCP client genuinely useful: hop from an item to its topics, to related topics, to related items across different feeds.
+`ABOUT`/`RELATED_TO`/`SIMILAR_TO` are derived edges: a background recompute job (triggered by the poller, gated to run at most once per 6 hours) rebuilds them from current `ABOUT` edges and a configurable time window. `SIMILAR_TO`'s recompute excludes topics above a configurable share of the corpus (default 5%, floor 50 items) to prevent a single generic or boilerplate topic from dominating the join — see `docs/roadmap/open-decisions.md`'s resolution log for the incident that drove this.
+
+These derived edges are what make traversal from an MCP client genuinely useful: hop from an item to its topics, to related topics, to related items across different feeds.
 
 ### Schema conventions
 
@@ -168,6 +165,8 @@ No external services required. Kuzu is an embedded dependency — it installs wi
 
 The Docker image deploys without modification to Railway, Render, Fly.io, and any platform supporting Docker. A `fly.toml` and `render.yaml` will be provided in the repository.
 
+**Not yet ready for public-internet deployment.** Reed's auth model — a single static `X-API-Key`, with an empty key silently allowing open access — was designed for a LAN-bound, self-hosted threat model, not one where the instance is reachable from the public internet. Before recommending or supporting a public cloud deployment, this needs: a hard failure (not silent open access) on a misconfigured or missing key, rate-limiting/brute-force protection, documented TLS/HTTPS requirements, and a DNS-rebinding review for the internet-exposed case. Tracked as an open item ahead of any public-cloud-hosting guidance; see `docs/roadmap/open-decisions.md`.
+
 ---
 
 ## API design
@@ -179,29 +178,26 @@ The Docker image deploys without modification to Railway, Render, Fly.io, and an
 
 Core resource groups:
 - `/feeds` — subscribe, list, refresh, delete
-- `/items` — list (with filters), read state, starred state
+- `/items` — list (with filters), read state, starred state, notes, tags
 - `/tags` — list, apply, remove
-- `/topics` — list, traverse
+- `/topics` — list, traverse, related topics, items about a topic
 - `/search` — full-text and graph-aware search
-- `/graph` — raw graph traversal endpoints (for power users and MCP)
+- `/graph` — derived-edge traversal endpoints (similarity, adjacency, feed health, author, topic timeline, recompute)
+- `/share` — share targets (webhook, Raindrop.io, copy) and delivery
+- `/export`, `/import` — JSON/OPML export, OPML import, full backup/restore
+- `/config` — reader and similarity-tuning settings
+
+See `docs/architecture/api-design.md` for the full endpoint reference.
 
 ---
 
 ## MCP server design
 
-The MCP server exposes the graph as a set of tools an AI client can call in sequence to traverse and reason over reading history.
+The MCP server exposes the graph as a set of tools an AI client can call in sequence to traverse and reason over reading history. It runs alongside the API in the same process (FastMCP), reachable over stdio (Claude Desktop, Cursor) or HTTP, both authenticated with the same `X-API-Key` model as the REST API.
 
-Initial tool surface:
-- `list_feeds` — all subscribed feeds with metadata
-- `get_feed_items` — items from a feed, with filters (unread, starred, date range)
-- `get_item` — full content of a single item
-- `get_topics` — all topics in the graph
-- `traverse_topic` — items and related topics connected to a given topic node
-- `find_related_items` — items similar to a given item (via shared topic edges)
-- `search` — keyword search across item titles and content
-- `mark_read` / `mark_starred` — write operations from the AI client
+27 tools span feeds, items, graph traversal (including cross-node path-finding between any two items or topics), topic/tag/author discovery, export, research capture, and config, plus an orientation resource and three guided-workflow prompts (`deep_reading_session`, `weekly_digest`, `research_thread`). The traversal tools are the differentiator: an AI client can hop item → topics → related topics → related items across different feeds, which is the use case that justifies the graph model.
 
-The traversal tools are the differentiator. An AI client can hop: item → topics → related topics → related items across different feeds. This is the use case that justifies the graph model.
+See `docs/architecture/mcp-server.md` for the full tool inventory and I/O contracts.
 
 ---
 

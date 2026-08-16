@@ -2,7 +2,7 @@
 
 [![Licence](https://img.shields.io/badge/Licence-AGPL_3.0-blue.svg)](https://github.com/simonives/reed/blob/main/LICENSE)
 ![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)
-[![CI Status](https://github.com/simonives/reed/actions/workflows/ci.yml/badge.svg)](https://github.com/simonives/reed/actions/workflows/ci.yml) ![Version](https://img.shields.io/badge/version-M6-blue.svg)
+[![CI Status](https://github.com/simonives/reed/actions/workflows/ci.yml/badge.svg)](https://github.com/simonives/reed/actions/workflows/ci.yml) ![Status](https://img.shields.io/badge/status-pre--release-orange.svg)
 
 A self-hosted, open-source RSS reader with a graph-native data model, public REST API, and first-class MCP server.
 
@@ -12,11 +12,13 @@ Reed is a single-user, self-hosted RSS reader built for simplicity and developer
 
 ## Why I built Reed
 
-I originally built Reed because my daily routines around my second brain did not have a neat and frictionless mechanism for incorproating a review and engagement task within my agentic workflow. I had my RSS feeds in a web-based application, however decent API access required a paid subscription. Further, the structures and interfaces of this application, and the competitors I was aware of (both FOSS and commercial) weren't built for an AI first, or AI at all, workflow. So I decided to build reed. I built a working prototype over a weekend with a vew to building something that [iterate with Claude here to build a compelling story].
+My daily reading routine runs through an AI-assisted second brain, and RSS never fit into it cleanly. The reader I was using kept decent API access behind a paid tier, and even then, its data model — and every competitor's, FOSS or commercial — was a flat list of articles. None of them were built with AI clients as a first-class consumer, so there was no way to hand an agent something richer than "here are some unread items."
+
+Reed exists to fix that. Feeds, articles, authors, topics, and tags are nodes and edges in a graph, not rows in a table, so an AI client can traverse relationships — hop from an item to its topics, to related topics, to related items across other feeds — instead of just paging through a list. It started as a weekend prototype and has grown into a daily driver.
 
 ## Status
 
-Active development — M0 through M5 complete (foundation, walking skeleton, usable reader, migration-ready, graph alive, API and integrations complete). Currently starting M6: the MCP server, exposing Reed's full tool surface — feeds, items, graph traversal, search, export, config — to AI clients like Claude Desktop over stdio and HTTP/SSE. M7 (v1.0.0) is next after that.
+Active development, pre-1.0.0. Milestones M0 through M6 are complete: foundation, walking skeleton, usable reader, migration-ready, graph alive (topic extraction, similarity graph), full API and integrations (share sheet, export/import, topics API), and a 27-tool MCP server exposing the whole graph to AI clients over stdio and HTTP. M7 (distribution, documentation, public launch) is in progress — see [`docs/roadmap/milestones.md`](docs/roadmap/milestones.md) for the live status.
 
 ## Design goals
 
@@ -37,16 +39,26 @@ Active development — M0 through M5 complete (foundation, walking skeleton, usa
 
 ## Self-hosting
 
-```bash
-# Docker (coming soon)
-docker-compose up
+Reed is not yet published as a versioned release — the Docker image on GHCR and the PyPI package land with v1.0.0. Until then, run it from source:
 
-# From source (coming soon)
+```bash
 git clone https://github.com/simonives/reed
 cd reed
 pip install -e .
 reed serve
 ```
+
+Or build the Docker image locally (matching the tag `docker-compose.yml` expects, so `docker compose up` picks it up without edits):
+
+```bash
+git clone https://github.com/simonives/reed
+cd reed
+docker build -t ghcr.io/simonives/reed:latest .
+cp .env.example .env   # add your REED_API_KEY
+docker compose up
+```
+
+Either way, set a real `REED_API_KEY` before starting — see [`.env.example`](.env.example) and [`CONTRIBUTING.md`](CONTRIBUTING.md) for local development setup.
 
 ## Licence
 

@@ -20,7 +20,7 @@ You will receive an acknowledgement within 48 hours. Reed will publish a securit
 
 ## Software Bill of Materials (SBOM)
 
-Reed publishes a full Software Bill of Materials with every release as a commitment to supply chain transparency. The SBOM lists every direct and transitive dependency included in Reed — their version, licence, and source.
+Reed is built to publish a full Software Bill of Materials with every release, starting from v1.0.0, as a commitment to supply chain transparency. The SBOM lists every direct and transitive dependency included in Reed — their version, licence, and source. Reed has not yet had a tagged release; until then, generate an SBOM locally with the same tools listed below.
 
 ### Format
 
@@ -66,7 +66,7 @@ Reed publishes SBOMs not because it is required to, but because it is the right 
 
 - All direct dependencies are declared in `pyproject.toml` with minimum version constraints
 - The Docker image pins dependencies to exact versions via a lockfile at build time
-- Dependencies are reviewed on each release for known vulnerabilities using `pip-audit`
+- Dependencies are audited for known vulnerabilities using `pip-audit`, and Dependabot alerts are triaged as they arrive; per-release review will apply once tagged releases begin
 - Reed has no runtime dependencies on external services — it makes outbound HTTP requests only to fetch RSS feeds and to execute user-configured share targets (webhooks, Raindrop API, etc.)
 
 ## Licence

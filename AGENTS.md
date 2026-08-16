@@ -8,7 +8,7 @@ Reed is a self-hosted, open-source RSS reader with a graph-native data model, a 
 
 **Current status**
 
-Current milestone: **M4 — Graph alive (complete)**.
+Current milestone: **M6 — MCP server (complete)**. **M7 — v1.0.0 in progress.**
 
 | Milestone | Name | Status |
 |---|---|---|
@@ -17,19 +17,15 @@ Current milestone: **M4 — Graph alive (complete)**.
 | M2 | Usable reader | Complete |
 | M3 | Migration-ready | Complete |
 | M4 | Graph alive | Complete |
-| M5 | API and integrations complete | Not started |
-| M6 | MCP server | Not started |
-| M7 | v1.0.0 | Not started |
+| M5 | API and integrations complete | Complete — four sub-projects (graph query endpoints, share sheet, export/import reshape, topics API completion), all merged |
+| M6 | MCP server | Complete — FastMCP, 27 tools, stdio + HTTP transports |
+| M7 | v1.0.0 | In progress — four sub-projects: distribution/SBOM release pipeline, documentation, website, public repository launch |
 
-M4 phase breakdown:
+M7 is gated on: the release pipeline (`.github/workflows/release.yml`) actually firing a real release, and a public-facing security review of the single-static-API-key auth model before recommending public cloud hosting (see `docs/roadmap/open-decisions.md`).
 
-| Phase | Scope | Status |
-|---|---|---|
-| M4-A | Graph enrichment — YAKE topic extraction, Topic/ABOUT schema v5, topics API | Complete |
-| M4-B | Bug-fix sprint — enrichment, dedup, cursor pagination, API hardening | Complete |
-| M4-C | Bug-fix sprint — XSS, async handler completion, restore isolation, export orphans, config nulls, poller resilience | Complete |
+A personal-use checkpoint ("RC1") was introduced ahead of the public v1.0.0 release — the same codebase, run locally, validated against a real feed library. RC1's blocking issue (unbounded `SIMILAR_TO` derived-edge recompute cost from a corpus-dominant topic) is fixed.
 
-Active session plan: none — M4 complete. Next: review open issues, then scope M5. See Expiry for the refresh trigger on this subsection.
+Active session plan: see `docs/roadmap/milestones.md` and open GitHub issues for current priorities. See Expiry for the refresh trigger on this subsection.
 
 **Architecture**
 
@@ -56,7 +52,8 @@ reed/
 │   ├── graph.py                ← ALL Kuzu interactions — the only file that touches the DB
 │   │                             Includes schema DDL, _SCHEMA_VERSION, _migrate()
 │   ├── poller.py               ← Async feed poller (background worker)
-│   ├── mcp_server.py           ← FastMCP server and tool definitions
+│   ├── mcp_server.py           ← FastMCP server, 27 tool definitions, prompts, resources
+│   ├── mcp.py                  ← ASGI mount for the MCP server (API-key middleware, routing)
 │   ├── discovery.py            ← Feed URL auto-discovery (website → feed URL)
 │   ├── reader.py                ← Reader mode extraction (trafilatura)
 │   ├── text.py                 ← Text utilities (word count, truncation)
@@ -71,8 +68,10 @@ reed/
 │   ├── tags.py                  ← /api/v1/tags
 │   ├── topics.py                ← /api/v1/topics
 │   ├── search.py                ← /api/v1/search
-│   ├── data.py                  ← /api/v1/data (export, backup, restore)
-│   ├── opml.py                  ← /api/v1/opml (import/export)
+│   ├── graph.py                 ← /api/v1/graph (similarity, adjacency, feed health, author, timeline, recompute)
+│   ├── share.py                 ← /api/v1/share (share targets, delivery)
+│   ├── export.py                ← /api/v1/export (JSON, OPML, backup)
+│   ├── import_.py                ← /api/v1/import (OPML, backup restore)
 │   ├── config.py                ← /api/v1/config (GET/PATCH)
 │   ├── deps.py                   ← FastAPI dependencies (API key auth)
 │   ├── schemas.py                ← Pydantic request/response models (shared)
@@ -106,7 +105,7 @@ reed/
 
 **Open decisions**
 
-The live list of unresolved design questions is at `docs/roadmap/open-decisions.md`. Check it before starting work on M5 (share targets, API completion) or M6 (MCP server). The resolved decisions log is in the same file.
+The live list of unresolved design questions is at `docs/roadmap/open-decisions.md`. Check it before starting work on M7 (distribution, documentation, public launch — including the auth-model review gating public cloud hosting). The resolved decisions log is in the same file.
 
 ## Precedence
 
@@ -185,6 +184,6 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
 
 ## Expiry
 
-- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-07-25, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
+- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-08-16, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
 - Pinned model versions (Sonnet 4.6, Opus 4.8, Gemini 3.1 Pro (High)) — owner: Simon, last-verified: 2026-07-25, refresh interval: whenever a named model is superseded or Simon changes routing.
 - Issue #31 reference (primary-key won't-fix) — stable design decision, not perishable; no refresh trigger.
