@@ -128,6 +128,8 @@ class TestConfig:
             "font_family_reading": "system-ui, sans-serif",
             "similarity_window_days": 90,
             "similarity_score_threshold": 0.1,
+            "similarity_max_topic_share": 0.05,
+            "similarity_topic_share_floor": 50,
         }
 
     def test_patch_persists(self, authed):

@@ -1860,7 +1860,13 @@ class GraphService:
         ]
 
     def recompute_derived_edges(
-        self, *, window_days: int, score_threshold: float, now: datetime | None = None
+        self,
+        *,
+        window_days: int,
+        score_threshold: float,
+        max_topic_share: float = 0.05,
+        topic_share_floor: int = 50,
+        now: datetime | None = None,
     ) -> None:
         """Recompute SIMILAR_TO (Item-Item) and RELATED_TO (Topic-Topic) edges.
 
@@ -1877,7 +1883,7 @@ class GraphService:
         indistinguishable from a freshly-touched one when their computed_at
         values collide, so the sweep re-checks validity directly instead.
 
-        Holds `_conn_lock` across all four statements, following the same
+        Holds `_conn_lock` across all five statements, following the same
         pattern established in `restore_data` for #124: Kuzu transactions are
         connection-scoped and every thread shares one `kuzu.Connection`, so
         without a lock held across the full body, `close()` running on
@@ -1895,11 +1901,26 @@ class GraphService:
         atomicity: there is no `BEGIN TRANSACTION` here, so a failure
         partway through leaves earlier statements' writes committed — judged
         acceptable given the mark-and-sweep design self-heals on the next run.
+
+        Topic-dominance cap (issue #241): a topic whose item_count exceeds
+        BOTH max_topic_share of the total item count AND the absolute
+        topic_share_floor is excluded from SIMILAR_TO's join entirely — not
+        just from the shared-topic count, but from both items' individual
+        topic-count denominators too, in both the creation (MERGE) and sweep
+        statements. A topic shared by a large fraction of the whole library
+        is not a meaningful similarity signal (verified: one boilerplate
+        topic with item_count=1444 in a 4,751-item real library caused an
+        unbounded join, 15+ minutes and 6.6GB+ memory, before this cap).
+        RELATED_TO is not affected — its join fans out per item's topic
+        count, already bounded by YAKE's fixed extraction limit, not per
+        topic's item count.
         """
         now = now or datetime.now(UTC)
         window_start = now - timedelta(days=window_days)
 
         with self._conn_lock:
+            total_items = int(_rows(self._execute("MATCH (i:Item) RETURN count(i) AS n"))[0]["n"])
+            max_topic_items = max(topic_share_floor, int(total_items * max_topic_share))
             self._execute(
                 """
                 MATCH (t1:Topic)<-[:ABOUT]-(i:Item)-[:ABOUT]->(t2:Topic)
@@ -1929,27 +1950,38 @@ class GraphService:
                 MATCH (i1:Item)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2:Item)
                 WHERE i1.id < i2.id
                   AND i1.published_at >= $window_start AND i2.published_at >= $window_start
+                  AND t.item_count <= $max_topic_items
                 WITH i1, i2, count(t) AS shared_topics
                 WHERE shared_topics >= 2
                 MATCH (i1)-[:ABOUT]->(t1:Topic)
+                WHERE t1.item_count <= $max_topic_items
                 WITH i1, i2, shared_topics, count(t1) AS n1
                 MATCH (i2)-[:ABOUT]->(t2:Topic)
+                WHERE t2.item_count <= $max_topic_items
                 WITH i1, i2, shared_topics, n1, count(t2) AS n2
                 WITH i1, i2, CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics) AS jaccard
                 WHERE jaccard > $threshold
                 MERGE (i1)-[r:SIMILAR_TO]->(i2)
                 SET r.score = jaccard, r.computed_at = $now
                 """,
-                {"window_start": window_start, "threshold": score_threshold, "now": now},
+                {
+                    "window_start": window_start,
+                    "threshold": score_threshold,
+                    "max_topic_items": max_topic_items,
+                    "now": now,
+                },
             )
             self._execute(
                 """
                 MATCH (i1:Item)-[r:SIMILAR_TO]->(i2:Item)
                 OPTIONAL MATCH (i1)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2)
+                WHERE t.item_count <= $max_topic_items
                 WITH r, i1, i2, count(t) AS shared_topics
                 OPTIONAL MATCH (i1)-[:ABOUT]->(t1:Topic)
+                WHERE t1.item_count <= $max_topic_items
                 WITH r, i1, i2, shared_topics, count(t1) AS n1
                 OPTIONAL MATCH (i2)-[:ABOUT]->(t2:Topic)
+                WHERE t2.item_count <= $max_topic_items
                 WITH r, i1, i2, shared_topics, n1, count(t2) AS n2
                 WITH r, i1, i2, shared_topics,
                      CASE WHEN (n1 + n2 - shared_topics) > 0
@@ -1963,7 +1995,11 @@ class GraphService:
                 )
                 DELETE r
                 """,
-                {"threshold": score_threshold, "window_start": window_start},
+                {
+                    "threshold": score_threshold,
+                    "window_start": window_start,
+                    "max_topic_items": max_topic_items,
+                },
             )
 
     def get_similar_items(self, item_id: str, limit: int = 20) -> list[dict[str, Any]] | None:

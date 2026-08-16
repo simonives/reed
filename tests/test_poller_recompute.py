@@ -62,6 +62,8 @@ async def test_maybe_recompute_runs_when_interval_elapsed(graph, monkeypatch):
 async def test_recompute_derived_edges_calls_graph_with_config_values(graph):
     graph.set_config_value("similarity_window_days", 45)
     graph.set_config_value("similarity_score_threshold", 0.2)
+    graph.set_config_value("similarity_max_topic_share", 0.1)
+    graph.set_config_value("similarity_topic_share_floor", 25)
     poller = FeedPoller(graph)
     with patch.object(graph, "recompute_derived_edges") as mock_graph_recompute:
         await poller.recompute_derived_edges()
@@ -69,6 +71,8 @@ async def test_recompute_derived_edges_calls_graph_with_config_values(graph):
     _, kwargs = mock_graph_recompute.call_args
     assert kwargs["window_days"] == 45
     assert kwargs["score_threshold"] == pytest.approx(0.2)
+    assert kwargs["max_topic_share"] == pytest.approx(0.1)
+    assert kwargs["topic_share_floor"] == 25
 
 
 @pytest.mark.asyncio

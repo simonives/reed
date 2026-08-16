@@ -90,6 +90,8 @@ class FeedPoller:
                 self._graph.recompute_derived_edges,
                 window_days=int(config["similarity_window_days"]),
                 score_threshold=float(config["similarity_score_threshold"]),
+                max_topic_share=float(config["similarity_max_topic_share"]),
+                topic_share_floor=int(config["similarity_topic_share_floor"]),
             )
             self._last_recompute = datetime.now(UTC)
         finally:
