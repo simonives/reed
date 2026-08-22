@@ -1,123 +1,3 @@
----
-layout: false
-title: Reed
-description: A self-hosted, open-source RSS reader with a graph-native data model, public REST API, and first-class MCP server.
----
-
-<div class="reed-landing">
-  <button class="theme-toggle" @click="toggleTheme" aria-label="Toggle light and dark theme">
-    <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
-    <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-  </button>
-
-  <header class="hero">
-    <div class="wordmark">Reed<span class="beta">BETA</span></div>
-    <h1>Your feeds.<br>Your graph.<br>Your data.</h1>
-    <p class="tagline">
-      A self-hosted, open-source RSS reader with a graph-native data model,
-      a public REST API, and a first-class MCP server.
-    </p>
-    <div class="cta-row">
-      <a class="cta primary" href="https://github.com/simonives/reed">View on GitHub</a>
-      <a class="cta ghost" href="#install">Self-host it</a>
-    </div>
-  </header>
-
-  <section class="prose">
-    <p>
-      Reed is a single-user, self-hosted RSS reader built for simplicity and
-      developer access. It uses a graph database
-      (<a href="https://kuzudb.com">Kuzu</a>) to model relationships between
-      feeds, articles, authors, topics, and tags, making your reading history
-      traversable by AI tools through a built-in MCP server.
-    </p>
-    <p>
-      Feeds, articles, authors, topics, and tags are nodes and edges in a
-      graph, not rows in a table, so an AI client can hop from an item to its
-      topics, to related topics, to related items across other feeds, instead
-      of just paging through a list.
-    </p>
-  </section>
-
-  <section class="principles">
-    <div class="principle">
-      <span class="index">01</span>
-      <h3>Graph-native</h3>
-      <p>Traverse your reading history the way ideas actually connect, not the way a table forces them apart.</p>
-    </div>
-    <div class="principle">
-      <span class="index">02</span>
-      <h3>API-first</h3>
-      <p>Everything the UI can do, the API can do. Full OpenAPI docs and a 27-tool MCP server, out of the box.</p>
-    </div>
-    <div class="principle">
-      <span class="index">03</span>
-      <h3>Zero ops</h3>
-      <p>One <code>docker compose up</code>. Kuzu is embedded, no database server, no external services.</p>
-    </div>
-    <div class="principle">
-      <span class="index">04</span>
-      <h3>Open source</h3>
-      <p>AGPL v3. Self-host it, fork it, read every line. Reed will never become a SaaS product.</p>
-    </div>
-  </section>
-
-  <section id="install" class="install">
-    <h2>Self-hosting</h2>
-    <p>Run it from source:</p>
-    <pre><code>git clone https://github.com/simonives/reed
-cd reed
-pip install -e .
-reed serve</code></pre>
-    <p>Or with Docker:</p>
-    <pre><code>git clone https://github.com/simonives/reed
-cd reed
-cp .env.example .env   # add your REED_API_KEY
-docker compose up</code></pre>
-    <p class="note">
-      Public beta, pre-1.0.0. See the
-      <a href="https://github.com/simonives/reed#roadmap-to-v100">roadmap to v1.0.0</a>
-      for what's left.
-    </p>
-  </section>
-
-  <footer>
-    <span>AGPL-3.0-or-later</span>
-    <span class="dot">&middot;</span>
-    <a href="https://github.com/simonives/reed">github.com/simonives/reed</a>
-  </footer>
-</div>
-
-<script setup>
-import { onMounted } from 'vue'
-
-const STORAGE_KEY = 'reed-theme'
-
-function applyTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme)
-}
-
-function toggleTheme() {
-  const current = document.documentElement.getAttribute('data-theme')
-  const next = current === 'dark' ? 'light' : 'dark'
-  localStorage.setItem(STORAGE_KEY, next)
-  applyTheme(next)
-}
-
-onMounted(() => {
-  const saved = localStorage.getItem(STORAGE_KEY)
-  if (saved) applyTheme(saved)
-
-  // VitePress emits stylesheets as <link rel="preload stylesheet" as="style">
-  // for performance, which only prefetches the file, it never applies it as
-  // an actual stylesheet on its own. Force-promote it so the page is styled.
-  document.querySelectorAll('link[rel~="preload"][as="style"]').forEach((link) => {
-    link.rel = 'stylesheet'
-  })
-})
-</script>
-
-<style>
 @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap');
 
 :root {
@@ -152,8 +32,13 @@ onMounted(() => {
   --accent-surface: #2a3950;
 }
 
-.reed-landing * {
+* {
   box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
 }
 
 .reed-landing {
@@ -424,4 +309,3 @@ footer .dot {
     gap: 2.5rem;
   }
 }
-</style>

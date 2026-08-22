@@ -18,29 +18,15 @@ concurrency:
 
 jobs:
   build:
-    name: Build site
+    name: Upload site
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: website/package-lock.json
-
-      - name: Install dependencies
-        working-directory: website
-        run: npm ci
-
-      - name: Build VitePress site
-        working-directory: website
-        run: npm run build
-
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: website/.vitepress/dist
+          path: website
 
   deploy:
     name: Deploy to Pages
