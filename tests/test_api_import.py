@@ -186,6 +186,30 @@ class TestImportOpml:
         assert len(data["failed"]) == 1
         assert data["failed"][0]["url"] == "https://fail.com/feed.rss"
 
+    def test_create_feed_failure_does_not_leak_internal_exception_text(self, authed, reed_client):
+        """CodeQL py/stack-trace-exposure: a raw graph.create_feed exception
+        must never reach the client verbatim, it may embed internal details
+        (a Kuzu file path, a query fragment) that shouldn't leave the server.
+        """
+        original = reed_client.app.state.graph.create_feed
+        sensitive = "database file /var/lib/reed/reed.kuzu is locked by pid 4821"
+
+        def _patched(*args, **kwargs):
+            raise RuntimeError(sensitive)
+
+        reed_client.app.state.graph.create_feed = _patched
+        try:
+            body = {"feeds": [{"url": "https://fail.com/feed.rss", "title": "Fail", "tags": []}]}
+            with patched_feed_fetch(module="reed.api.import_"):
+                r = authed.post("/api/v1/import/opml", json=body)
+        finally:
+            reed_client.app.state.graph.create_feed = original
+
+        assert r.status_code == 200
+        reason = r.json()["data"]["failed"][0]["reason"]
+        assert sensitive not in reason
+        assert "/var/lib/reed" not in reason
+
     def test_no_auth_returns_401(self, reed_client):
         r = reed_client.post("/api/v1/import/opml", json={"feeds": []})
         assert r.status_code == 401
