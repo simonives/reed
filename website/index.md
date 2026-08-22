@@ -107,6 +107,13 @@ function toggleTheme() {
 onMounted(() => {
   const saved = localStorage.getItem(STORAGE_KEY)
   if (saved) applyTheme(saved)
+
+  // VitePress emits stylesheets as <link rel="preload stylesheet" as="style">
+  // for performance, which only prefetches the file, it never applies it as
+  // an actual stylesheet on its own. Force-promote it so the page is styled.
+  document.querySelectorAll('link[rel~="preload"][as="style"]').forEach((link) => {
+    link.rel = 'stylesheet'
+  })
 })
 </script>
 
