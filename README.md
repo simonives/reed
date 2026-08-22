@@ -4,6 +4,8 @@
 ![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)
 [![CI Status](https://github.com/simonives/reed/actions/workflows/ci.yml/badge.svg)](https://github.com/simonives/reed/actions/workflows/ci.yml) ![Status](https://img.shields.io/badge/status-pre--release-orange.svg)
 
+> **BETA.** Reed is public and usable today, but pre-1.0.0. Expect breaking changes before the v1.0.0 tag. See [Roadmap to v1.0.0](#roadmap-to-v100) below for what's left.
+
 A self-hosted, open-source RSS reader with a graph-native data model, public REST API, and first-class MCP server.
 
 ## What is Reed?
@@ -18,7 +20,7 @@ Reed exists to fix that. Feeds, articles, authors, topics, and tags are nodes an
 
 ## Status
 
-Active development, pre-1.0.0. Milestones M0 through M6 are complete: foundation, walking skeleton, usable reader, migration-ready, graph alive (topic extraction, similarity graph), full API and integrations (share sheet, export/import, topics API), and a 27-tool MCP server exposing the whole graph to AI clients over stdio and HTTP. M7 (distribution, documentation, public launch) is in progress — see [`docs/roadmap/milestones.md`](docs/roadmap/milestones.md) for the live status.
+Public beta, pre-1.0.0. Milestones M0 through M6 are complete: foundation, walking skeleton, usable reader, migration-ready, graph alive (topic extraction, similarity graph), full API and integrations (share sheet, export/import, topics API), and a 27-tool MCP server exposing the whole graph to AI clients over stdio and HTTP. See [`docs/roadmap/milestones.md`](docs/roadmap/milestones.md) for the live status, and the roadmap sections below for what's left before v1.0.0.
 
 ## Design goals
 
@@ -59,6 +61,27 @@ docker compose up
 ```
 
 Either way, set a real `REED_API_KEY` before starting — see [`.env.example`](.env.example) and [`CONTRIBUTING.md`](CONTRIBUTING.md) for local development setup.
+
+## Roadmap to v1.0.0
+
+What's left before the beta label comes off:
+
+- **Website:** a live project site with quickstart and installation instructions, served via GitHub Pages.
+- **Distribution polish:** the release pipeline is built and dry-run verified, but no real `v1.0.0` tag has been pushed yet.
+- **Public-hosting auth review:** the current single-static-API-key auth model was designed for a LAN-bound, self-hosted deployment. Before v1.0.0 formally endorses public cloud hosting (Railway, Render, Fly.io), that model needs a dedicated review, tracked as its own GitHub issue.
+
+Track live progress in [`docs/roadmap/milestones.md`](docs/roadmap/milestones.md) and the repository's Issues and Milestones.
+
+## Roadmap after v1.0.0
+
+Ideas already scoped for consideration after the initial release. None are commitments yet.
+
+- **User-maintained watch lists:** a standing set of topics or descriptions of interest that flags new incoming items matching those concerns, independent of which feed or topic-extraction path they arrived through.
+- **Saved graph traversal views:** named, reusable graph queries beyond the current ad hoc traversal tools.
+- **Author and co-authorship modelling:** treating authors as first-class graph entities with their own relationships, not just item metadata.
+- **Scheduled discovery:** an opt-in feature to periodically scan for new content beyond the feeds a user already subscribes to, rather than being limited to what has already been ingested.
+
+See `docs/roadmap/open-decisions.md` in the repository for the full design-question backlog these are drawn from.
 
 ## Licence
 

@@ -8,24 +8,7 @@ Reed is a self-hosted, open-source RSS reader with a graph-native data model, a 
 
 **Current status**
 
-Current milestone: **M6 — MCP server (complete)**. **M7 — v1.0.0 in progress.**
-
-| Milestone | Name | Status |
-|---|---|---|
-| M0 | Foundation | Complete |
-| M1 | Walking skeleton | Complete |
-| M2 | Usable reader | Complete |
-| M3 | Migration-ready | Complete |
-| M4 | Graph alive | Complete |
-| M5 | API and integrations complete | Complete — four sub-projects (graph query endpoints, share sheet, export/import reshape, topics API completion), all merged |
-| M6 | MCP server | Complete — FastMCP, 27 tools, stdio + HTTP transports |
-| M7 | v1.0.0 | In progress — four sub-projects: distribution/SBOM release pipeline, documentation, website, public repository launch |
-
-M7 is gated on: the release pipeline (`.github/workflows/release.yml`) actually firing a real release, and a public-facing security review of the single-static-API-key auth model before recommending public cloud hosting (see `docs/roadmap/open-decisions.md`).
-
-A personal-use checkpoint ("RC1") was introduced ahead of the public v1.0.0 release — the same codebase, run locally, validated against a real feed library. RC1's blocking issue (unbounded `SIMILAR_TO` derived-edge recompute cost from a corpus-dominant topic) is fixed.
-
-Active session plan: see `docs/roadmap/milestones.md` and open GitHub issues for current priorities. See Expiry for the refresh trigger on this subsection.
+See [`docs/roadmap/milestones.md`](docs/roadmap/milestones.md) for milestone definitions and current progress, and the repository's GitHub Issues and Milestones for active work items. This file does not track day-to-day project status, check those sources directly rather than relying on this file being current.
 
 **Architecture**
 
@@ -111,7 +94,7 @@ The live list of unresolved design questions is at `docs/roadmap/open-decisions.
 
 This file is authoritative for all work in this repo — no parent agent-instruction file exists inside it. Global default agent preferences apply where not overridden here; this file overrides those defaults on repo-specific technical and process matters regardless of recency.
 
-Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet 4.6, Opus 4.8) for repo workflows rather than tier-only routing, and it makes the Superpowers methodology (brainstorming → plan → TDD → verify → finish) mandatory for this repo even where a lighter-weight default might otherwise apply.
+Two specific overrides worth naming: this file defines repo-specific model routing conventions (mapping task type to capability tier and risk level, see Instructions below) rather than tier-only routing, and it makes the Superpowers methodology (brainstorming → plan → TDD → verify → finish) mandatory for this repo even where a lighter-weight default might otherwise apply.
 
 ## Instructions
 
@@ -121,22 +104,16 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
 - **Primary keys.** `Feed` is keyed by `url`, `Item` by `guid` (natural keys). Each also carries a UUID `id` used as the public/API identifier. Kuzu indexes only the primary key, and the natural keys are the ingestion hot path and enforce feed/item dedup, so they stay as PKs; UUID lookups table-scan, which is negligible at single-user scale. This resolves the primary-key portion of issue #31 as a deliberate won't-fix.
 - **Graph schema.** The authoritative current schema is in `ARCHITECTURE.md`; the DDL lives in `src/reed/graph.py` `_init_schema`, versioned by `_SCHEMA_VERSION` with registered per-version steps in `_migrate`.
 - **Branch naming.** `feat/`, `fix/`, `docs/`, `chore/`.
-- **Model routing.** Apply these consistently — the right model for the task is not optional.
-
-  | Task | Model | How |
-  |---|---|---|
-  | Default — implementation, refactoring, debugging, file edits | Sonnet 4.6 | Default session model — no change needed |
-  | Brainstorming/design workflow | Sonnet 4.6, max thinking budget | Simon confirms before it begins |
-  | Code review workflow | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
-  | Security review workflow | Opus 4.8 | Simon runs manually: `claude --model claude-opus-4-8` |
-  | Adversarial review (see Commands) | Gemini 3.1 Pro (High) via `agy` | Run by the agent after brainstorming and after reviews |
-
-- **Keep "Current status" current.** Update the milestone/phase table and active session plan in Scope whenever a milestone phase completes or the plan changes. Do not let it drift.
+- **Model routing.** Match model capability to task risk:
+  - Default (implementation, refactoring, debugging, file edits): the project's standard working model.
+  - Brainstorming and design workflow: the project's standard working model, maximum available reasoning effort.
+  - Code review and security review workflows: the strongest available model tier, run by a maintainer rather than the agent doing the implementation work.
+  - Adversarial review (see Commands): a different model family than the one used for the primary work, to catch blind spots the primary model shares with itself.
 
 ### Commands
 
-- **Superpowers methodology — mandatory for all new features or significant changes.** The `superpowers@claude-plugins-official` plugin is installed; do not skip any hard gate without explicit instruction from Simon.
-  1. Brainstorming workflow — before any implementation. No code until a design is presented and approved. Run the adversarial review workflow (below) on the output before seeking Simon's approval.
+- **Superpowers methodology — mandatory for all new features or significant changes.** The `superpowers@claude-plugins-official` plugin is installed; do not skip any hard gate without explicit instruction from the maintainer.
+  1. Brainstorming workflow — before any implementation. No code until a design is presented and approved. Run the adversarial review workflow (below) on the output before seeking the maintainer's approval.
   2. Planning workflow — immediately after brainstorming approval. Implementation plan written to `docs/superpowers/specs/` before coding begins. Note: `docs/superpowers/` is gitignored — specs live on disk for reference during implementation but are not committed to git.
   3. Test-driven development — mandatory for all implementation. No production code without a failing test first. Delete code written before tests and start over — no exceptions.
   4. Verification before completion — before marking any task done. All tests pass, output is clean, behaviour matches the spec.
@@ -151,12 +128,12 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
   - Run the verify workflow to confirm the expected behaviour in a live context (not just that tests pass).
 
 - **Before any PR:**
-  - Run the code-review workflow on the branch diff — mandatory for every PR. Simon runs this manually on Opus 4.8.
+  - Run the code-review workflow on the branch diff — mandatory for every PR. Run manually by the maintainer on the strongest available model tier.
   - Run the security-review workflow if the change touches any of: auth (`api/deps.py`, `X-API-Key` handling, any new endpoint), external HTTP (poller fetch, feed subscription), Kuzu write paths (`graph.py` mutations), config or environment variable handling, or file I/O / data export/import.
-  - After each review, run the adversarial review workflow (below) before presenting findings to Simon.
+  - After each review, run the adversarial review workflow (below) before presenting findings to the maintainer.
   - All work happens on a feature branch; PR into `main` — never commit directly to `main`.
 
-- **Adversarial review workflow.** Two outputs require a Gemini pass before Simon approves them: brainstorming proposals (after the brainstorming workflow, before approval) and review findings (after code-review or security-review, before Simon acts on them).
+- **Adversarial review workflow.** Two outputs require a Gemini pass before the maintainer approves them: brainstorming proposals (after the brainstorming workflow, before approval) and review findings (after code-review or security-review, before the maintainer acts on them).
 
   Run:
   ```bash
@@ -164,7 +141,7 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
   ```
   Construct the prompt with: brief project context (Reed is a self-hosted RSS reader; the component under review), the full agent output (proposal or findings), and the instruction "You are an adversarial reviewer. Identify gaps, risks, missed cases, or alternative perspectives. What did the agent miss or get wrong?"
 
-  Then present Simon with: the agent's output, Gemini's adversarial review (verbatim key points, attributed), and a one-paragraph synthesis of where they agree, where they diverge, and what the divergence means. Wait for Simon's explicit approval or amendment before proceeding.
+  Then present the maintainer with: the agent's output, Gemini's adversarial review (verbatim key points, attributed), and a one-paragraph synthesis of where they agree, where they diverge, and what the divergence means. Wait for the maintainer's explicit approval or amendment before proceeding.
 
 - **After any review (code-review or security-review):**
   - For every finding, create a GitHub issue in `simonives/reed`.
@@ -174,16 +151,15 @@ Two specific overrides worth naming: this file pins exact model IDs (e.g. Sonnet
 
 ## Negatives
 
-- **Do not skip a Superpowers hard gate** (brainstorming, planning, TDD, verification, finishing-a-branch) **without explicit instruction from Simon** in that session. There is no standing exception — only Simon can waive a gate, and only in the moment.
+- **Do not skip a Superpowers hard gate** (brainstorming, planning, TDD, verification, finishing-a-branch) **without explicit instruction from the maintainer** in that session. There is no standing exception — only the maintainer can waive a gate, and only in the moment.
 - **Do not write production code before a failing test exists**, except for throwaway exploration spikes — and those must be deleted before production implementation begins; do not adapt spike code into the real implementation.
 - **Do not commit directly to `main`.** All work goes through a feature branch and a PR.
-- **Do not run the code-review or security-review workflows yourself.** Both are run manually by Simon on Opus 4.8 — open the PR and prompt him to run them rather than attempting to run them yourself.
-- **Do not merge a Gemini adversarial concern into your own output silently.** Surface it explicitly alongside your synthesis and wait for Simon's call.
+- **Do not run the code-review or security-review workflows yourself.** Both are run manually by the maintainer on the strongest available model tier — open the PR and prompt the maintainer to run them rather than attempting to run them yourself.
+- **Do not merge a Gemini adversarial concern into your own output silently.** Surface it explicitly alongside your synthesis and wait for the maintainer's call.
 - **Do not batch multiple review findings into one GitHub issue** — one finding, one issue. Exception: a finding already fixed within the same PR does not need an issue at all.
 - **Do not call Kuzu from anywhere except `graph.py`** (the single seam rule) — API routers, MCP server, and poller must go through it.
 
 ## Expiry
 
-- Milestone/phase status table and active session plan (Scope → Current status) — owner: Simon, last-verified: 2026-08-16, refresh interval: on every milestone phase completion or change of active session plan (check every session, per the mandatory read-first instruction).
-- Pinned model versions (Sonnet 4.6, Opus 4.8, Gemini 3.1 Pro (High)) — owner: Simon, last-verified: 2026-07-25, refresh interval: whenever a named model is superseded or Simon changes routing.
+- Model routing convention (capability-to-risk mapping, not pinned model IDs) — owner: Simon, last-verified: 2026-07-25, refresh interval: whenever the routing convention itself changes.
 - Issue #31 reference (primary-key won't-fix) — stable design decision, not perishable; no refresh trigger.

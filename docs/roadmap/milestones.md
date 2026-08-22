@@ -299,9 +299,11 @@ Public release. Reed is ready for users who are not Simon.
 - VitePress site built and deployed via `pages.yml` workflow
 
 **Repository**
-- GitHub Release created with tag `v1.0.0`
-- Release notes summarising v1 scope
-- Repository made public
+
+Split into two gates:
+
+- **Public beta gate:** repository sanitized (no personal or employer-specific content in current files, git history, or Issues/PRs), `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` are generic contributor docs, README carries a BETA banner and a roadmap to v1.0.0, repository visibility flipped to public. Does not require the website or distribution/SBOM work to be complete.
+- **v1.0.0 tag gate:** GitHub Release created with tag `v1.0.0`, release notes summarising v1 scope, BETA banner removed from the README. Requires the website (below) to be live and the public-facing auth-model review (tracked as its own GitHub issue) to be resolved.
 
 ### Done means
 
