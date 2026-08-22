@@ -58,3 +58,6 @@ docker-compose.override.yml
 
 # Superpowers workflow artefacts (specs, plans) — local only, not part of the repo
 docs/superpowers/
+
+# Design reference screenshots (third-party UI captures for comparison, local only, never committed)
+docs/design/reference-not-committed/

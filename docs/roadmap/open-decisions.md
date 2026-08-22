@@ -147,6 +147,22 @@ Resolved items are removed from this list and captured in the relevant design or
 
 **Recommendation pending:** Not scoped to a milestone. Needs its own `/brainstorming` pass (or a joint one with #205, given the likely overlap) — not a blocker for RC1, M7, or v1.0.0's currently-agreed scope.
 
+**Fresh examples (Simon, 17 Aug 2026), reinforcing the "scoped to existing feeds" reading:** user-defined topics of interest to match incoming content against, e.g. "Australian Fair Work Act" (potentially down to specific clauses within the Act), "a specific enterprise software platform," "Artificial Intelligence in Recruitment." Framed primarily as a navigation/ease-of-use aid (surfacing already-ingested content against standing themes) rather than an alerting/notification mechanism. Worth weighing both framings (navigation aid vs. alert) when this gets its `/brainstorming` pass, since they may want different UX even if the underlying match mechanism is shared.
+
+---
+
+## Visual design uplift — beautiful, simple UI
+
+**Question:** Should Reed get a dedicated visual design pass, moving from "practical" to "beautiful and simple" — comparable to Feedly's polish — rather than the current functional-but-plain M2 baseline?
+
+**Affects:** Web UI styling layer only (three-pane layout, item list, reading pane); no schema, API, or MCP surface changes implied. Likely touches the CSS variable/theme system from M2 (`Settings — Appearance`) as the mechanism, not a rebuild.
+
+**Context:** Raised by Simon (17 Aug 2026). M2 shipped a complete functional reading experience (three-pane layout, dark mode, CSS variable customisation) but no dedicated aesthetic/engagement pass — it works well but doesn't feel engaging or beautiful the way Feedly does.
+
+**Recommendation pending:** Not scoped to a milestone yet. Candidate for a post-v1.0.0 design pass — needs its own `/brainstorming` session to define what "beautiful and simple, like Feedly" means concretely (layout density, typography, colour system, motion/micro-interactions) before any implementation work starts.
+
+**Reference material:** two Feedly UI screenshots (list view, reading pane) captured 18 Jul 2026, kept at `docs/design/reference-not-committed/` (gitignored, third-party UI, not for the repo) and mirrored in the vault at `Projects/Side Projects/Reed/Design Reference/`.
+
 ---
 
 ## Resolved decisions (moved here for reference)
