@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -458,12 +459,22 @@ class TestImportBackup:
 
 
 # --- Feedly integration (skipped when fixture unavailable) ---
+#
+# A real Feedly OPML export exercises quirks synthetic fixtures don't
+# reproduce. Point REED_FEEDLY_FIXTURE_DIR at a local directory containing
+# one to run this locally; it's not part of CI or the repo.
 
-_FEEDLY_INBOX = Path.home() / "Documents/Obsidian/Simon's Garden/Inbox"
-_FEEDLY_OPML = next(_FEEDLY_INBOX.glob("*.opml"), None) if _FEEDLY_INBOX.exists() else None
+_FEEDLY_INBOX = (
+    Path(os.environ["REED_FEEDLY_FIXTURE_DIR"]) if "REED_FEEDLY_FIXTURE_DIR" in os.environ else None
+)
+_FEEDLY_OPML = (
+    next(_FEEDLY_INBOX.glob("*.opml"), None) if _FEEDLY_INBOX and _FEEDLY_INBOX.exists() else None
+)
 
 
-@pytest.mark.skipif(_FEEDLY_OPML is None, reason="Feedly OPML fixture not in Simon's Garden Inbox")
+@pytest.mark.skipif(
+    _FEEDLY_OPML is None, reason="REED_FEEDLY_FIXTURE_DIR not set or has no .opml fixture"
+)
 class TestFeedlyIntegration:
     def test_feedly_preview_parses_successfully(self, authed):
         r = authed.post(
