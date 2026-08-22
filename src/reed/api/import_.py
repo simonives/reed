@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 import feedparser
@@ -18,6 +19,8 @@ from ..http import UnsafeURLError, http_client, safe_get
 from ..opml import parse_opml
 from .deps import get_graph, require_api_key
 from .schemas import envelope
+
+logger = logging.getLogger(__name__)
 
 MAX_OPML_BYTES = 2 * 1024 * 1024  # 2 MB
 MAX_RESTORE_BYTES = 50 * 1024 * 1024  # 50 MB
@@ -142,8 +145,9 @@ async def import_opml(
                 tags=item.tags,
             )
             added += 1
-        except Exception as exc:
-            failed.append({"url": item.url, "reason": str(exc)})
+        except Exception:
+            logger.exception("create_feed failed during OPML import for %s", item.url)
+            failed.append({"url": item.url, "reason": "Could not create feed"})
     return envelope({"added": added, "skipped": skipped, "failed": failed})
 
 
