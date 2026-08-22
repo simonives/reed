@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "reed-rss"
-version = "0.1.0"
+version = "0.6.0"
 description = "A self-hosted, open-source RSS reader with a graph-native data model, REST API, and MCP server"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
