@@ -5,6 +5,11 @@ description: A self-hosted, open-source RSS reader with a graph-native data mode
 ---
 
 <div class="reed-landing">
+  <button class="theme-toggle" @click="toggleTheme" aria-label="Toggle light and dark theme">
+    <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+
   <header class="hero">
     <div class="wordmark">Reed<span class="beta">BETA</span></div>
     <h1>Your feeds.<br>Your graph.<br>Your data.</h1>
@@ -83,27 +88,61 @@ docker compose up</code></pre>
   </footer>
 </div>
 
+<script setup>
+import { onMounted } from 'vue'
+
+const STORAGE_KEY = 'reed-theme'
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme)
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme')
+  const next = current === 'dark' ? 'light' : 'dark'
+  localStorage.setItem(STORAGE_KEY, next)
+  applyTheme(next)
+}
+
+onMounted(() => {
+  const saved = localStorage.getItem(STORAGE_KEY)
+  if (saved) applyTheme(saved)
+})
+</script>
+
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap');
 
 :root {
-  --paper: #faf7f0;
-  --ink: #1c1a17;
-  --ink-soft: #57524a;
-  --rule: #e7e1d4;
-  --accent: #c1531f;
-  --accent-soft: #f3e2d6;
+  --bg: #ffffff;
+  --ink: #202124;
+  --ink-soft: #5f6368;
+  --rule: #dadce0;
+  --surface: #f8f9fa;
+  --accent: #1a73e8;
+  --accent-surface: #e8f0fe;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #17140f;
-    --ink: #f3ede0;
-    --ink-soft: #b3a996;
-    --rule: #332d23;
-    --accent: #e0813f;
-    --accent-soft: #3a2517;
+  :root:not([data-theme="light"]) {
+    --bg: #202124;
+    --ink: #e8eaed;
+    --ink-soft: #9aa0a6;
+    --rule: #3c4043;
+    --surface: #303134;
+    --accent: #8ab4f8;
+    --accent-surface: #2a3950;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #202124;
+  --ink: #e8eaed;
+  --ink-soft: #9aa0a6;
+  --rule: #3c4043;
+  --surface: #303134;
+  --accent: #8ab4f8;
+  --accent-surface: #2a3950;
 }
 
 .reed-landing * {
@@ -111,15 +150,59 @@ docker compose up</code></pre>
 }
 
 .reed-landing {
-  background: var(--paper);
+  position: relative;
+  background: var(--bg);
   color: var(--ink);
-  font-family: 'Instrument Sans', system-ui, sans-serif;
+  font-family: 'Roboto', system-ui, sans-serif;
   min-height: 100vh;
   padding: 0 1.5rem;
 }
 
 .reed-landing a {
   color: inherit;
+}
+
+.theme-toggle {
+  position: absolute;
+  top: 1.5rem;
+  right: 1.5rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.theme-toggle:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.icon-moon {
+  display: none;
+}
+
+:root[data-theme="dark"] .icon-sun {
+  display: none;
+}
+
+:root[data-theme="dark"] .icon-moon {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .icon-sun {
+    display: none;
+  }
+  :root:not([data-theme="light"]) .icon-moon {
+    display: block;
+  }
 }
 
 .hero {
@@ -130,10 +213,9 @@ docker compose up</code></pre>
 }
 
 .wordmark {
-  font-family: 'Fraunces', serif;
   font-size: 1.375rem;
   font-weight: 500;
-  letter-spacing: 0.02em;
+  letter-spacing: -0.01em;
   display: inline-flex;
   align-items: center;
   gap: 0.6rem;
@@ -141,10 +223,10 @@ docker compose up</code></pre>
 }
 
 .wordmark .beta {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'Roboto Mono', monospace;
   font-size: 0.625rem;
   font-weight: 500;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   color: var(--accent);
   border: 1px solid var(--accent);
   border-radius: 999px;
@@ -152,11 +234,10 @@ docker compose up</code></pre>
 }
 
 .hero h1 {
-  font-family: 'Fraunces', serif;
   font-weight: 400;
   font-size: clamp(2.75rem, 7vw, 4.5rem);
-  line-height: 1.05;
-  letter-spacing: -0.01em;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
   margin: 0 0 2rem;
 }
 
@@ -182,21 +263,27 @@ docker compose up</code></pre>
   font-size: 0.95rem;
   font-weight: 500;
   text-decoration: none;
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-
-.cta:hover {
-  transform: translateY(-1px);
+  transition: box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .cta.primary {
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(26, 115, 232, 0.3), 0 1px 3px 1px rgba(26, 115, 232, 0.15);
+}
+
+.cta.primary:hover {
+  box-shadow: 0 1px 3px rgba(26, 115, 232, 0.4), 0 4px 8px 3px rgba(26, 115, 232, 0.15);
 }
 
 .cta.ghost {
   border: 1px solid var(--rule);
-  color: var(--ink);
+  color: var(--accent);
+  background: var(--bg);
+}
+
+.cta.ghost:hover {
+  background: var(--accent-surface);
 }
 
 .prose {
@@ -218,9 +305,12 @@ docker compose up</code></pre>
 }
 
 .prose a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.prose a:hover {
   text-decoration: underline;
-  text-decoration-color: var(--rule);
-  text-underline-offset: 3px;
 }
 
 .principles {
@@ -234,14 +324,13 @@ docker compose up</code></pre>
 }
 
 .principle .index {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'Roboto Mono', monospace;
   font-size: 0.75rem;
   color: var(--accent);
   letter-spacing: 0.08em;
 }
 
 .principle h3 {
-  font-family: 'Fraunces', serif;
   font-weight: 500;
   font-size: 1.375rem;
   margin: 0.6rem 0 0.6rem;
@@ -262,7 +351,6 @@ docker compose up</code></pre>
 }
 
 .install h2 {
-  font-family: 'Fraunces', serif;
   font-weight: 500;
   font-size: 1.75rem;
   margin: 0 0 1.5rem;
@@ -275,15 +363,16 @@ docker compose up</code></pre>
 }
 
 .install pre {
-  background: var(--accent-soft);
-  border-radius: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 0.5rem;
   padding: 1.25rem 1.5rem;
   overflow-x: auto;
   margin: 0 0 1.5rem;
 }
 
 .install code {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'Roboto Mono', monospace;
   font-size: 0.875rem;
   line-height: 1.7;
   color: var(--ink);
@@ -296,9 +385,12 @@ docker compose up</code></pre>
 }
 
 .install .note a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.install .note a:hover {
   text-decoration: underline;
-  text-decoration-color: var(--accent);
-  text-underline-offset: 3px;
 }
 
 footer {
@@ -306,7 +398,7 @@ footer {
   margin: 0 auto;
   padding: 2.5rem 0 4rem;
   border-top: 1px solid var(--rule);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'Roboto Mono', monospace;
   font-size: 0.8rem;
   color: var(--ink-soft);
   text-align: center;
