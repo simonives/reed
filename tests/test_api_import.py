@@ -472,7 +472,9 @@ _FEEDLY_OPML = (
 )
 
 
-@pytest.mark.skipif(_FEEDLY_OPML is None, reason="REED_FEEDLY_FIXTURE_DIR not set or has no .opml fixture")
+@pytest.mark.skipif(
+    _FEEDLY_OPML is None, reason="REED_FEEDLY_FIXTURE_DIR not set or has no .opml fixture"
+)
 class TestFeedlyIntegration:
     def test_feedly_preview_parses_successfully(self, authed):
         r = authed.post(
