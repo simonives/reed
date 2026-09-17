@@ -20,7 +20,7 @@ dependencies = [
     # (used in mcp_server.py / main.py) only exist in fastmcp 3.x, not 2.x.
     # Dockerfile installs via `pip install .` with no lockfile, so this floor
     # is the actual contract for the distributed image.
-    "fastmcp>=3.4,<4",
+    "fastmcp>=3.4,<5",
     "feedparser>=6.0",
     # http.py builds a pinned transport on httpx/httpcore internals (an SSRF
     # guard); pin both so an upgrade that moves them is caught, not silent.
