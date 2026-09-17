@@ -148,6 +148,14 @@ These variables apply globally across both light and dark themes. A "Reset to de
 
 **v2 skin system:** Full CSS file upload or in-app CSS editor for users who want complete control over Reed's appearance. v1 variables remain as a convenience layer above the v2 system.
 
+### Future design direction: Material Design + a Reed-specific colour scheme
+
+Captured 18 Sep 2026 as a design expectation for a future pass, not yet scoped or built. Placeholder only, full palette work (light/dark token mapping, contrast verification, replacing "Reed default blue" above) is deferred to a dedicated design session.
+
+- **Visual language:** Google Material Design (component behaviour, elevation, motion conventions), not a from-scratch design system.
+- **Colour identity:** a bespoke palette rather than Material's default blue, named and themed around Reed's own identity. Inspiration: papyrus growing on the Nile, a direct pun on "Reed" (papyrus is itself a reed species) as well as a genuinely distinctive, warm, organic palette instead of a generic tech-blue.
+- **Status:** concept only. Exact hex values, light/dark variants, and WCAG AA contrast verification are not yet decided, this is the brief for that future session, not the outcome of it.
+
 ---
 
 ## What Reed's UI is not
