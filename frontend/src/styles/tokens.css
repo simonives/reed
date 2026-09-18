@@ -1,22 +1,38 @@
 /*
- * Design tokens. Both themes share typography, spacing, and layout; only the
- * colour palette differs (principles.md §6). The appearance variables at the
- * bottom are the v1 user-exposed controls (principles.md §9) — defaults live
- * here; the Settings UI that overrides them lands in the management branch.
+ * Design tokens. Material Design 3 colour roles, shape, elevation, and type
+ * scale, in the Papyrus (light) / Nile (dark) identity. Legacy token names
+ * (--bg, --text, --radius, etc.) are kept and repointed onto the new palette
+ * so components not yet migrated to the M3 role names keep rendering
+ * correctly (see docs/superpowers/specs/2026-09-18-material-design-refresh-design.md
+ * for the full contrast-ratio table and rollout plan).
  */
 
 :root {
-  /* Appearance controls — overridable per user (injected onto :root at runtime) */
-  --accent-color: #3b82f6;
+  /* Appearance controls, overridable per user (injected onto :root at
+     runtime by useAppearance.js). --accent-color's default lives in the
+     theme blocks below, not here, because Papyrus and Nile have different
+     defaults; useAppearance.js overrides it the same way regardless. */
   --font-size-base: 16px;
   --reading-width: 760px;
   --line-height: 1.65;
   --font-family-reading: system-ui, sans-serif;
 
-  /* Typography */
+  /* Typography (UI chrome) */
   --font-family-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-size-sm: 0.8125rem;
   --font-size-xs: 0.75rem;
+
+  /* M3 type scale (UI chrome only, reading-pane article text is unaffected) */
+  --type-title-size: 22px;
+  --type-title-weight: 500;
+  --type-title-tracking: -0.01em;
+  --type-label-lg-size: 14px;
+  --type-label-lg-weight: 500;
+  --type-label-md-size: 13px;
+  --type-label-md-weight: 400;
+  --type-label-sm-size: 11px;
+  --type-label-sm-weight: 700;
+  --type-label-sm-tracking: 0.04em;
 
   /* Spacing scale */
   --space-1: 4px;
@@ -31,40 +47,85 @@
   --itemlist-width: 380px;
   --radius: 6px;
 
-  /* Semantic accents (readable on both themes) */
+  /* M3 shape scale */
+  --shape-xs: 4px;
+  --shape-sm: 8px;
+  --shape-md: 12px;
+  --shape-lg: 16px;
+  --shape-pill: 999px;
+
+  /* Semantic accents (readable on both themes, unrelated to M3 roles) */
   --color-danger: #dc2626;
   --color-star: #f59e0b;
 }
 
-/* Light theme (default) */
+/* Papyrus, light theme (default) */
 :root,
 :root[data-theme="light"] {
-  --bg: #ffffff;
-  --bg-subtle: #f6f7f8;
-  --bg-raised: #ffffff;
-  --bg-selected: #e8f0fe;
-  --bg-hover: #f0f1f3;
-  --border: #e2e4e8;
-  --border-strong: #cfd2d8;
-  --text: #1a1c1e;
-  --text-secondary: #5b5f66;
-  --text-muted: #8b8f96;
-  --accent-contrast: #ffffff;
+  /* M3 colour roles */
+  --surface: #fbf3e2;
+  --surface-container-low: #f3e9d2;
+  --surface-container-high: #fffdf8;
+  --on-surface: #2a2115;
+  --on-surface-variant: #5c4e38;
+  --accent-color: #0f6b64; /* default primary: Nile teal, user-overridable */
+  --primary: var(--accent-color);
+  --on-primary: #ffffff;
+  --secondary: #8c6519;
+  --on-secondary: #ffffff;
+  --outline: #8a7548;
+
+  /* Legacy aliases, kept for components not yet migrated to M3 role names */
+  --bg: var(--surface);
+  --bg-subtle: var(--surface-container-low);
+  --bg-raised: var(--surface-container-high);
+  --bg-selected: #dcede9;
+  --bg-hover: #f7eeda;
+  --border: #e4d6b4;
+  --border-strong: var(--outline);
+  --text: var(--on-surface);
+  --text-secondary: var(--on-surface-variant);
+  --text-muted: #736752;
+  --accent-contrast: var(--on-primary);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  /* M3 elevation (shadow plus lifted surface-container colour) */
+  --elevation-0: none;
+  --elevation-1: var(--shadow);
+  --elevation-2: 0 2px 6px rgba(42, 33, 21, 0.15), 0 1px 2px rgba(42, 33, 21, 0.1);
 }
 
-/* Dark theme */
+/* Nile, dark theme */
 :root[data-theme="dark"] {
-  --bg: #0f0f10;
-  --bg-subtle: #17181a;
-  --bg-raised: #1d1f22;
-  --bg-selected: #1e2b45;
-  --bg-hover: #232528;
-  --border: #2a2d31;
-  --border-strong: #3a3e44;
-  --text: #e8e8ea;
-  --text-secondary: #a8acb3;
-  --text-muted: #71757c;
-  --accent-contrast: #ffffff;
+  /* M3 colour roles */
+  --surface: #0d2422;
+  --surface-container-low: #123330;
+  --surface-container-high: #16403c;
+  --on-surface: #f0e6cf;
+  --on-surface-variant: #b9ae94;
+  --accent-color: #e0b04a; /* default primary: papyrus gold, user-overridable */
+  --primary: var(--accent-color);
+  --on-primary: #1a1408;
+  --secondary: #264d46;
+  --on-secondary: #e0b04a;
+  --outline: #4a7a73;
+
+  /* Legacy aliases, kept for components not yet migrated to M3 role names */
+  --bg: var(--surface);
+  --bg-subtle: var(--surface-container-low);
+  --bg-raised: var(--surface-container-high);
+  --bg-selected: #1a423e;
+  --bg-hover: #163a36;
+  --border: #1d4a45;
+  --border-strong: var(--outline);
+  --text: var(--on-surface);
+  --text-secondary: var(--on-surface-variant);
+  --text-muted: #948970;
+  --accent-contrast: var(--on-primary);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+
+  /* M3 elevation (shadow plus lifted surface-container colour) */
+  --elevation-0: none;
+  --elevation-1: var(--shadow);
+  --elevation-2: 0 2px 6px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.35);
 }
