@@ -61,3 +61,6 @@ docs/superpowers/
 
 # Design reference screenshots (third-party UI captures for comparison, local only, never committed)
 docs/design/reference-not-committed/
+
+# Brainstorming visual-companion mockups, local scratch only, never committed
+.superpowers/
