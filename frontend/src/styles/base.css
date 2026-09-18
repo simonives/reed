@@ -242,7 +242,7 @@ textarea {
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: no-preference) {
+@media not (prefers-reduced-motion: reduce) {
   .ripple {
     animation: ripple-expand 450ms ease-out;
   }

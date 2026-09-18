@@ -19,6 +19,7 @@ export function spawnRipple(el, event) {
   span.style.left = `${event.clientX - rect.left - size / 2}px`
   span.style.top = `${event.clientY - rect.top - size / 2}px`
   span.addEventListener('animationend', () => span.remove())
+  setTimeout(() => span.remove(), 600)
   el.appendChild(span)
 }
 
