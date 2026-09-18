@@ -26,7 +26,13 @@ describe('spawnRipple', () => {
   it('appends a .ripple span on pointerdown when motion is allowed', () => {
     mockMatchMedia(false)
     spawnRipple(el, { clientX: 20, clientY: 20 })
-    expect(el.querySelectorAll('.ripple')).toHaveLength(1)
+    const spans = el.querySelectorAll('.ripple')
+    expect(spans).toHaveLength(1)
+    const span = spans[0]
+    expect(span.style.width).toBe('40px')
+    expect(span.style.height).toBe('40px')
+    expect(span.style.left).toBe('0px')
+    expect(span.style.top).toBe('0px')
   })
 
   it('does not append a .ripple span when the user prefers reduced motion', () => {
