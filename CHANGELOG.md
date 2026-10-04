@@ -11,9 +11,6 @@ Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-- `get_topic_clusters` applied `limit` to topic rows ordered by cluster id, so the unclustered bucket (`-1`, every topic without `RELATED_TO` edges) came back first as one alphabetical cluster of fragments. `limit` now counts clusters, the unclustered bucket and singletons are excluded, clusters are ordered by size, each lists at most 25 topics by item count, and each carries a `size` field
-
 ## [0.6.1] - 2026-10-04
 
 ### Added
@@ -43,6 +40,7 @@ Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Topic centrality (PageRank) and clustering (Louvain) over the topic-co-occurrence graph
 
 ### Fixed
+- `get_topic_clusters` applied `limit` to topic rows ordered by cluster id, so the unclustered bucket (`-1`, every topic without `RELATED_TO` edges) came back first as one alphabetical cluster of fragments. `limit` now counts clusters, the unclustered bucket and singletons are excluded, clusters are ordered by size, each lists at most 25 topics by item count, and each carries a `size` field
 - Topic extraction emitted numeric, time-of-day, calendar, contraction (`n’t`) and boilerplate fragments (`1:00 am cst`, `331-363`, `hosted on acast`) that dominated clustering. `is_valid_topic()` now filters them at extraction, and existing invalid topics are purged when the poller starts
 - Feed-level tags were invisible at item level, so tag filters returned nothing and every tag count was 0. Items now inherit their feed's tags at read time across item lists, tag counts, search and `item.tags`
 - Poll errors with an empty `str(exc)` (for example httpx timeouts) were stored as an empty `last_error`. The exception type is now recorded
