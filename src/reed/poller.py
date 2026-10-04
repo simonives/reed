@@ -43,6 +43,9 @@ class FeedPoller:
         self._http = http_client()
         logger.info("Feed poller started")
         try:
+            purged = await asyncio.to_thread(self._graph.purge_invalid_topics)
+            if purged:
+                logger.info("Purged %d invalid topic(s)", purged)
             await self._backfill_topics()
         except Exception:
             logger.warning("Topic backfill failed on startup; continuing", exc_info=True)
@@ -185,7 +188,9 @@ class FeedPoller:
             await self._enrich_new_items(new_items)
 
         except Exception as exc:
-            error = str(exc)[:500]
+            error = (str(exc) or type(exc).__name__)[:500]
+            if str(exc) and not isinstance(exc, httpx.HTTPStatusError):
+                error = f"{type(exc).__name__}: {error}"[:500]
             logger.warning("Poll failed for %s: %s", url, error)
             await asyncio.to_thread(
                 self._graph.update_feed_poll_metadata,

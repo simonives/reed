@@ -529,3 +529,21 @@ class TestGetTopicTimelineBucket:
         topic_id = graph.get_topic_by_name("AI")["id"]
         with pytest.raises(ValueError):
             graph.get_topic_timeline(topic_id, bucket="fortnight")
+
+
+def test_purge_invalid_topics_removes_noise_and_keeps_real(seeded):
+    graph, item_id = seeded
+    graph.enrich_item(
+        item_id,
+        [("1:00 am cst", 0.1), ("331-363", 0.2), ("machine learning", 0.3)],
+    )
+    assert graph.purge_invalid_topics() == 2
+    names = {t["name"] for t in graph.get_item_topics(item_id)}
+    assert names == {"machine learning"}
+
+
+def test_purge_invalid_topics_is_idempotent(seeded):
+    graph, item_id = seeded
+    graph.enrich_item(item_id, [("331-363", 0.2)])
+    assert graph.purge_invalid_topics() == 1
+    assert graph.purge_invalid_topics() == 0

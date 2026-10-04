@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
@@ -106,6 +108,24 @@ class TestItemTools:
         async with Client(server) as client:
             await client.call_tool("mark_starred", {"item_id": item_id, "starred": True})
         assert graph.get_item(item_id)["starred"] is True
+
+    async def test_mark_starred_response_omits_bulky_article_text(self, mcp_server):
+        server, graph, poller = mcp_server
+        graph.create_feed(url="https://f.example.com/rss", title="F", description="", site_url="")
+        item_id = create_test_item(
+            graph,
+            feed_url="https://f.example.com/rss",
+            guid="g1",
+            url="https://f.example.com/1",
+            title="One",
+        )
+        graph.save_reader_content(item_id, "x" * 50_000, datetime.now(UTC))
+        async with Client(server) as client:
+            result = await client.call_tool("mark_starred", {"item_id": item_id, "starred": True})
+        assert result.data["starred"] is True
+        assert result.data["id"] == item_id
+        assert "reader_content" not in result.data
+        assert "content" not in result.data
 
     async def test_tag_item_add_and_remove(self, mcp_server):
         server, graph, poller = mcp_server
