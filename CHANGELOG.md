@@ -5,12 +5,13 @@ All notable changes to Reed will be documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Reed has not yet had a tagged release — everything below is unreleased,
-grouped by the milestone it landed in.
+0.6.1 is the first tagged release. Entries before it are grouped by the milestone they landed in.
 
 ---
 
 ## [Unreleased]
+
+## [0.6.1] - 2026-10-04
 
 ### Added
 
@@ -39,6 +40,10 @@ grouped by the milestone it landed in.
 - Topic centrality (PageRank) and clustering (Louvain) over the topic-co-occurrence graph
 
 ### Fixed
+- Topic extraction emitted numeric, time-of-day, calendar, contraction (`n’t`) and boilerplate fragments (`1:00 am cst`, `331-363`, `hosted on acast`) that dominated clustering. `is_valid_topic()` now filters them at extraction, and existing invalid topics are purged when the poller starts
+- Feed-level tags were invisible at item level, so tag filters returned nothing and every tag count was 0. Items now inherit their feed's tags at read time across item lists, tag counts, search and `item.tags`
+- Poll errors with an empty `str(exc)` (for example httpx timeouts) were stored as an empty `last_error`. The exception type is now recorded
+- The `mark_starred` MCP tool returned the full article body (about 92 KB) for a single toggle. It no longer returns `content` or `reader_content`
 - `SIMILAR_TO` derived-edge recompute had unbounded combinatorial blowup when a single generic or boilerplate topic dominated a large corpus (e.g. a podcast-hosting-platform phrase repeated on every episode of one feed), causing multi-minute, multi-gigabyte recompute passes. Fixed with a configurable topic-dominance cap (percentage-of-corpus plus an absolute floor) excluding dominant topics from the similarity join
 - A recompute failure could permanently kill the background poller; the derived-edge recompute's database lock is now held across its full multi-statement body to prevent a race with concurrent shutdown
 
