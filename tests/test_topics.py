@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
-from reed.topics import extract_keywords, item_text, make_extractor
+import pytest
+
+from reed.topics import extract_keywords, is_valid_topic, item_text, make_extractor
 
 
 def test_extract_keywords_returns_list_of_pairs():
@@ -59,3 +61,52 @@ def test_item_text_concatenates_all_three_fields():
     assert "Alpha" in result
     assert "Beta" in result
     assert "Gamma" in result
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        "1:00 am cst",
+        "331-363",
+        "2026",
+        "10 15",
+        "am cst",
+        "x",
+        "read more",
+        "click here",
+        "hosted on acast",
+        "acast",
+        "n\u2019t",
+        "n't",
+        "\u2019s",
+        "work",
+        "appeared first on",
+        "september",
+        "october 3",
+        "monday",
+        "entry",
+    ],
+)
+def test_is_valid_topic_rejects_noise(kw):
+    assert not is_valid_topic(kw)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    ["ai", "workday", "eu ai act", "fair work commission", "machine learning", "s/4hana"],
+)
+def test_is_valid_topic_accepts_real_topics(kw):
+    assert is_valid_topic(kw)
+
+
+def test_extract_keywords_drops_numeric_and_time_fragments():
+    extractor = make_extractor()
+    text = (
+        "Webinar starts at 1:00 am CST on 331-363 attendees. "
+        "The Fair Work Commission published guidance on workplace surveillance and artificial "
+        "intelligence in rostering software."
+    )
+    kws = [kw for kw, _ in extract_keywords(text, extractor)]
+    assert kws
+    assert all(is_valid_topic(kw) for kw in kws)
+    assert not any(any(c.isdigit() for c in kw) for kw in kws)

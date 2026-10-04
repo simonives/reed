@@ -186,3 +186,21 @@ class TestSubscribeFeedValidation:
         with patched_feed_fetch():
             r = authed.post("/api/v1/feeds", json={"url": "https://example.com/feed.rss"})
         assert r.status_code == 201
+
+
+class TestEmptyErrorMessage:
+    """Exceptions with an empty str() (e.g. httpx timeouts) must record a diagnosable error."""
+
+    async def test_empty_exception_message_records_exception_type(self, graph):
+        import httpx
+
+        graph.create_feed(url="https://example.com/f", title="F", description="", site_url="")
+        feed = graph.list_feeds_for_polling()[0]
+        poller = FeedPoller(graph)
+
+        with patch("reed.poller.safe_get", side_effect=httpx.ReadTimeout("")):
+            await poller._poll_feed(feed, datetime.now(UTC), AsyncMock(), {})
+
+        stored = graph.list_feeds_for_polling()[0]
+        assert stored["last_error"]
+        assert "ReadTimeout" in stored["last_error"]

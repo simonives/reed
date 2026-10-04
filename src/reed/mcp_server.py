@@ -203,7 +203,8 @@ def create_mcp_server(graph: GraphService, poller: FeedPoller) -> FastMCP:
         item = graph.update_item_state(item_id, starred=starred)
         if item is None:
             raise ToolError(f"Item not found: {item_id}")
-        return item
+        # A state toggle must not echo the article body back into the client's context.
+        return {k: v for k, v in item.items() if k not in ("content", "reader_content")}
 
     @mcp.tool
     def tag_item(item_id: str, tag: str, action: str) -> dict[str, Any]:

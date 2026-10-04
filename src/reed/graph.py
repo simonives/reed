@@ -18,6 +18,7 @@ import kuzu
 
 from .config import CONFIG_DEFAULTS
 from .http import safe_url as _safe_url
+from .topics import is_valid_topic
 
 logger = logging.getLogger(__name__)
 
@@ -686,6 +687,13 @@ class GraphService:
         )
         return item_id
 
+    # An item carries a tag when it is tagged directly or its feed is. Inheritance is
+    # resolved at read time so re-tagging a feed takes effect immediately.
+    _ITEM_HAS_TAG = (
+        "(EXISTS { MATCH (i)-[:TAGGED]->(:Tag {name: $tag}) } "
+        "OR EXISTS { MATCH (g:Feed)-[:HAS_ITEM]->(i), (g)-[:FEED_TAGGED]->(:Tag {name: $tag}) })"
+    )
+
     def _item_filters(
         self,
         feed_id: str | None,
@@ -723,7 +731,7 @@ class GraphService:
 
         item_joins = ""
         if tag is not None:
-            item_joins += " MATCH (i)-[:TAGGED]->(t:Tag {name: $tag})"
+            clauses.append(self._ITEM_HAS_TAG)
         if topic_id is not None:
             item_joins += " MATCH (i)-[:ABOUT]->(tp:Topic {id: $topic_id})"
 
@@ -851,7 +859,7 @@ class GraphService:
 
         tag_clause = ""
         if tag is not None:
-            tag_clause = " MATCH (i)-[:TAGGED]->(t:Tag {name: $tag})"
+            tag_clause = f" WHERE {self._ITEM_HAS_TAG}"
             params["tag"] = tag
 
         if author is not None:
@@ -871,7 +879,7 @@ class GraphService:
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         prefix = (
             f"CALL QUERY_FTS_INDEX('Item', 'item_fts', $q) "
-            f"WITH node AS i, score{feed_clause}{tag_clause}{where}"
+            f"WITH node AS i, score{tag_clause}{feed_clause}{where}"
         )
 
         # count query must not include $offset/$limit — Kuzu rejects unused params
@@ -922,13 +930,16 @@ class GraphService:
                 UNWIND $guids AS g
                 MATCH (i:Item {guid: g})-[:TAGGED]->(t:Tag)
                 RETURN i.guid AS guid, t.name AS name
-                ORDER BY name
+                UNION
+                UNWIND $guids AS g
+                MATCH (f:Feed)-[:HAS_ITEM]->(i:Item {guid: g}), (f)-[:FEED_TAGGED]->(t:Tag)
+                RETURN i.guid AS guid, t.name AS name
                 """,
                 {"guids": guids},
             )
         )
         tags: dict[str, list[str]] = {}
-        for row in rows:
+        for row in sorted(rows, key=lambda r: r["name"]):
             tags.setdefault(row["guid"], []).append(row["name"])
         return tags
 
@@ -1045,15 +1056,25 @@ class GraphService:
         return rows[0] if rows else None
 
     def list_tags(self) -> list[dict[str, Any]]:
-        result = self._execute(
-            """
-            MATCH (t:Tag)
-            OPTIONAL MATCH (i:Item)-[:TAGGED]->(t)
-            RETURN t.id AS id, t.name AS name, count(i) AS item_count
-            ORDER BY name ASC
-            """
+        """All tags with the count of distinct items carrying each, directly or via the feed."""
+        tags = _rows(self._execute("MATCH (t:Tag) RETURN t.id AS id, t.name AS name"))
+        pairs = _rows(
+            self._execute(
+                """
+                MATCH (i:Item)-[:TAGGED]->(t:Tag) RETURN t.id AS tag_id, i.id AS item_id
+                UNION
+                MATCH (f:Feed)-[:FEED_TAGGED]->(t:Tag), (f)-[:HAS_ITEM]->(i:Item)
+                RETURN t.id AS tag_id, i.id AS item_id
+                """
+            )
         )
-        return _rows(result)
+        counts: dict[str, int] = {}
+        for p in pairs:
+            counts[p["tag_id"]] = counts.get(p["tag_id"], 0) + 1
+        return [
+            {"id": t["id"], "name": t["name"], "item_count": counts.get(t["id"], 0)}
+            for t in sorted(tags, key=lambda t: t["name"])
+        ]
 
     def delete_tag(self, tag_id: str) -> bool:
         if self.get_tag(tag_id) is None:
@@ -1603,6 +1624,14 @@ class GraphService:
                 "CREATE (i)-[:ABOUT {score: $score}]->(t)",
                 {"item_id": item_id, "topic_name": topic_name, "score": score},
             )
+
+    def purge_invalid_topics(self) -> int:
+        """Delete topics failing is_valid_topic, with their edges. Returns the count removed."""
+        rows = _rows(self._execute("MATCH (t:Topic) RETURN t.name AS name"))
+        bad = [r["name"] for r in rows if not is_valid_topic(r["name"])]
+        for name in bad:
+            self._execute("MATCH (t:Topic {name: $name}) DETACH DELETE t", {"name": name})
+        return len(bad)
 
     def enrich_item(self, item_id: str, keywords: list[tuple[str, float]]) -> None:
         """Link keywords to item as topics, then mark item as enriched."""
