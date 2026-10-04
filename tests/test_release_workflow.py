@@ -123,9 +123,18 @@ class TestDryRunTrigger:
         if the logic were inverted."""
         workflow = _load_release_workflow()
         expected = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
-        for step_name in ("Publish to PyPI", "Create GitHub Release"):
-            step = _find_step(workflow, step_name)
-            assert step.get("if", "").strip() == expected
+        release = _find_step(workflow, "Create GitHub Release")
+        assert release.get("if", "").strip() == expected
+        pypi = _find_step(workflow, "Publish to PyPI")
+        assert pypi.get("if", "").strip().startswith(expected)
+
+    def test_pypi_publish_is_blocked_for_pre_v1_tags(self):
+        """Reed is not published to PyPI before v1.0.0 (maintainer decision).
+        0.x tags still build the image and create a GitHub Release, but the
+        PyPI step must carry an explicit exclusion for `v0.` tags."""
+        workflow = _load_release_workflow()
+        condition = _find_step(workflow, "Publish to PyPI").get("if", "")
+        assert "!startsWith(github.ref, 'refs/tags/v0.')" in condition
 
     def test_publish_to_pypi_skips_existing_to_survive_a_retry(self):
         """If a later step (e.g. Create GitHub Release) fails after PyPI

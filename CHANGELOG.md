@@ -11,6 +11,9 @@ Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The release workflow no longer publishes `v0.*` tags to PyPI. They still build and push the container image and create a GitHub Release. PyPI publishing starts at v1.0.0
+
 ## [0.6.1] - 2026-10-04
 
 ### Added
