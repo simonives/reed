@@ -110,6 +110,10 @@ def _match_source(item: dict[str, Any], q: str) -> list[str]:
     return sources or ["content"]  # FTS matched — assume content if we can't tell
 
 
+_CLUSTER_TOPICS_SHOWN = 25
+_UNCLUSTERED_ID = -1
+
+
 class GraphService:
     """Single access point for all Kuzu interactions.
 
@@ -1753,19 +1757,35 @@ class GraphService:
                     self._execute(
                         "CALL louvain('topic_clusters') "
                         "RETURN node.id AS id, node.name AS name, "
-                        "louvain_id AS cluster_id "
-                        "ORDER BY cluster_id, node.name LIMIT $limit",
-                        {"limit": limit},
+                        "node.item_count AS item_count, louvain_id AS cluster_id"
                     )
                 )
             finally:
                 self._drop_projected_graph_if_exists("topic_clusters")
-        clusters: dict[int, list[dict[str, Any]]] = {}
+        members: dict[int, list[dict[str, Any]]] = {}
         for row in rows:
-            clusters.setdefault(row["cluster_id"], []).append(
-                {"id": row["id"], "name": row["name"]}
-            )
-        return [{"cluster_id": cid, "topics": topics} for cid, topics in clusters.items()]
+            members.setdefault(row["cluster_id"], []).append(row)
+        # Kuzu's louvain() labels every topic without RELATED_TO edges -1: that is the
+        # unclustered bucket, not a community. `limit` counts clusters, not topics.
+        multi = [
+            (cid, topics)
+            for cid, topics in members.items()
+            if cid != _UNCLUSTERED_ID and len(topics) >= 2
+        ]
+        multi.sort(key=lambda c: (-len(c[1]), c[0]))
+        return [
+            {
+                "cluster_id": cid,
+                "size": len(topics),
+                "topics": [
+                    {"id": t["id"], "name": t["name"]}
+                    for t in sorted(topics, key=lambda t: (-(t["item_count"] or 0), t["name"]))[
+                        :_CLUSTER_TOPICS_SHOWN
+                    ]
+                ],
+            }
+            for cid, topics in multi[:limit]
+        ]
 
     def get_topic(self, topic_id: str) -> dict[str, Any] | None:
         rows = _rows(

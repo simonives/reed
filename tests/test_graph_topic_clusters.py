@@ -121,3 +121,50 @@ class TestGetTopicClusters:
 
     def test_empty_on_fresh_instance(self, graph):
         assert graph.get_topic_clusters() == []
+
+
+class TestTopicClustersLimit:
+    def _seed(self, graph):
+        graph.create_feed(url="https://f.example.com/rss", title="F", description="", site_url="")
+
+        def item(guid, topics):
+            item_id = create_test_item(
+                graph, "https://f.example.com/rss", guid, f"https://f.example.com/{guid}", guid
+            )
+            graph.enrich_item(item_id, [(t, 0.9) for t in topics])
+
+        # Two genuine communities, each co-occurring twice (RELATED_TO needs >= 2).
+        for n in (1, 2):
+            item(f"ab{n}", ["Beta", "Alpha"])
+            item(f"xy{n}", ["Yankee", "Xray"])
+        # Isolated topics that sort alphabetically before every real topic.
+        item("iso", ["aaa-lone", "aab-lone", "aac-lone"])
+        graph.recompute_derived_edges(window_days=365, score_threshold=0.0)
+
+    def test_limit_counts_clusters_not_topic_rows(self, graph):
+        self._seed(graph)
+        clusters = graph.get_topic_clusters(limit=2)
+        assert len(clusters) == 2
+        memberships = sorted(sorted(t["name"] for t in c["topics"]) for c in clusters)
+        assert memberships == [["Alpha", "Beta"], ["Xray", "Yankee"]]
+
+    def test_isolated_topics_are_not_returned_as_a_cluster(self, graph):
+        self._seed(graph)
+        names = {t["name"] for c in graph.get_topic_clusters() for t in c["topics"]}
+        assert not any(n.endswith("-lone") for n in names)
+
+    def test_largest_cluster_first(self, graph):
+        self._seed(graph)
+        # Grow one community so ordering by size is observable.
+        item_id = create_test_item(
+            graph, "https://f.example.com/rss", "ab3", "https://f.example.com/ab3", "ab3"
+        )
+        graph.enrich_item(item_id, [("Beta", 0.9), ("Alpha", 0.9), ("Gamma", 0.9)])
+        item_id = create_test_item(
+            graph, "https://f.example.com/rss", "ab4", "https://f.example.com/ab4", "ab4"
+        )
+        graph.enrich_item(item_id, [("Beta", 0.9), ("Alpha", 0.9), ("Gamma", 0.9)])
+        graph.recompute_derived_edges(window_days=365, score_threshold=0.0)
+        clusters = graph.get_topic_clusters()
+        sizes = [len(c["topics"]) for c in clusters]
+        assert sizes == sorted(sizes, reverse=True)

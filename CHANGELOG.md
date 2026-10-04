@@ -11,6 +11,9 @@ Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `get_topic_clusters` applied `limit` to topic rows ordered by cluster id, so the unclustered bucket (`-1`, every topic without `RELATED_TO` edges) came back first as one alphabetical cluster of fragments. `limit` now counts clusters, the unclustered bucket and singletons are excluded, clusters are ordered by size, each lists at most 25 topics by item count, and each carries a `size` field
+
 ## [0.6.1] - 2026-10-04
 
 ### Added
