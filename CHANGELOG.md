@@ -11,6 +11,12 @@ Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-10-13
+
+### Fixed
+- The derived-edge recompute failed on every poll cycle when Kuzu's `SIMILAR_TO` table hit an internal CSR assertion (`csr_node_group.cpp`, `KU_UNREACHABLE`), logging over 1,000 failures a day. The recompute now drops and recreates `SIMILAR_TO` (derived data) and retries once when it sees that assertion
+- A failed recompute is no longer retried every 60 seconds. It backs off from 5 minutes, doubling per consecutive failure, up to the recompute interval, and a success clears the backoff
+
 ### Changed
 - The release workflow no longer publishes `v0.*` tags to PyPI. They still build and push the container image and create a GitHub Release. PyPI publishing starts at v1.0.0
 
