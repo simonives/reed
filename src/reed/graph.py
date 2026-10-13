@@ -110,6 +110,15 @@ def _match_source(item: dict[str, Any], q: str) -> list[str]:
     return sources or ["content"]  # FTS matched — assume content if we can't tell
 
 
+_SIMILAR_TO_DDL = (
+    "CREATE REL TABLE IF NOT EXISTS SIMILAR_TO"
+    "(FROM Item TO Item, score DOUBLE, computed_at TIMESTAMP)"
+)
+
+# Kuzu can leave a rel table's CSR in a state where any bulk write trips this
+# internal assertion; the only recovery is to rebuild the table.
+_CSR_CORRUPTION_MARKER = "csr_node_group.cpp"
+
 _CLUSTER_TOPICS_SHOWN = 25
 _UNCLUSTERED_ID = -1
 
@@ -227,10 +236,7 @@ class GraphService:
             )
         """)
         self._execute("CREATE REL TABLE IF NOT EXISTS ABOUT(FROM Item TO Topic, score DOUBLE)")
-        self._execute(
-            "CREATE REL TABLE IF NOT EXISTS SIMILAR_TO"
-            "(FROM Item TO Item, score DOUBLE, computed_at TIMESTAMP)"
-        )
+        self._execute(_SIMILAR_TO_DDL)
         self._execute(
             "CREATE REL TABLE IF NOT EXISTS RELATED_TO"
             "(FROM Topic TO Topic, weight DOUBLE, computed_at TIMESTAMP)"
@@ -1999,62 +2005,89 @@ class GraphService:
                 """
             )
 
-            self._execute(
-                """
-                MATCH (i1:Item)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2:Item)
-                WHERE i1.id < i2.id
-                  AND i1.published_at >= $window_start AND i2.published_at >= $window_start
-                  AND t.item_count <= $max_topic_items
-                WITH i1, i2, count(t) AS shared_topics
-                WHERE shared_topics >= 2
-                MATCH (i1)-[:ABOUT]->(t1:Topic)
-                WHERE t1.item_count <= $max_topic_items
-                WITH i1, i2, shared_topics, count(t1) AS n1
-                MATCH (i2)-[:ABOUT]->(t2:Topic)
-                WHERE t2.item_count <= $max_topic_items
-                WITH i1, i2, shared_topics, n1, count(t2) AS n2
-                WITH i1, i2, CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics) AS jaccard
-                WHERE jaccard > $threshold
-                MERGE (i1)-[r:SIMILAR_TO]->(i2)
-                SET r.score = jaccard, r.computed_at = $now
-                """,
-                {
-                    "window_start": window_start,
-                    "threshold": score_threshold,
-                    "max_topic_items": max_topic_items,
-                    "now": now,
-                },
-            )
-            self._execute(
-                """
-                MATCH (i1:Item)-[r:SIMILAR_TO]->(i2:Item)
-                OPTIONAL MATCH (i1)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2)
-                WHERE t.item_count <= $max_topic_items
-                WITH r, i1, i2, count(t) AS shared_topics
-                OPTIONAL MATCH (i1)-[:ABOUT]->(t1:Topic)
-                WHERE t1.item_count <= $max_topic_items
-                WITH r, i1, i2, shared_topics, count(t1) AS n1
-                OPTIONAL MATCH (i2)-[:ABOUT]->(t2:Topic)
-                WHERE t2.item_count <= $max_topic_items
-                WITH r, i1, i2, shared_topics, n1, count(t2) AS n2
-                WITH r, i1, i2, shared_topics,
-                     CASE WHEN (n1 + n2 - shared_topics) > 0
-                          THEN CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics)
-                          ELSE 0.0 END AS jaccard
-                WHERE NOT (
-                    shared_topics >= 2
-                    AND jaccard > $threshold
-                    AND i1.published_at >= $window_start
-                    AND i2.published_at >= $window_start
+            try:
+                self._recompute_similar_to(window_start, score_threshold, max_topic_items, now)
+            except RuntimeError as exc:
+                if _CSR_CORRUPTION_MARKER not in str(exc):
+                    raise
+                logger.warning(
+                    "SIMILAR_TO table hit a Kuzu CSR assertion (%s); rebuilding the "
+                    "derived table and retrying once",
+                    exc,
                 )
-                DELETE r
-                """,
-                {
-                    "threshold": score_threshold,
-                    "window_start": window_start,
-                    "max_topic_items": max_topic_items,
-                },
+                self._rebuild_similar_to_table()
+                self._recompute_similar_to(window_start, score_threshold, max_topic_items, now)
+
+    def _rebuild_similar_to_table(self) -> None:
+        """Drop and recreate SIMILAR_TO. Safe because it is wholly derived data."""
+        with self._conn_lock:
+            self._execute("DROP TABLE SIMILAR_TO")
+            self._execute(_SIMILAR_TO_DDL)
+
+    def _recompute_similar_to(
+        self,
+        window_start: datetime,
+        score_threshold: float,
+        max_topic_items: int,
+        now: datetime,
+    ) -> None:
+        """Create/refresh then sweep SIMILAR_TO. Caller holds `_conn_lock`."""
+        self._execute(
+            """
+            MATCH (i1:Item)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2:Item)
+            WHERE i1.id < i2.id
+              AND i1.published_at >= $window_start AND i2.published_at >= $window_start
+              AND t.item_count <= $max_topic_items
+            WITH i1, i2, count(t) AS shared_topics
+            WHERE shared_topics >= 2
+            MATCH (i1)-[:ABOUT]->(t1:Topic)
+            WHERE t1.item_count <= $max_topic_items
+            WITH i1, i2, shared_topics, count(t1) AS n1
+            MATCH (i2)-[:ABOUT]->(t2:Topic)
+            WHERE t2.item_count <= $max_topic_items
+            WITH i1, i2, shared_topics, n1, count(t2) AS n2
+            WITH i1, i2, CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics) AS jaccard
+            WHERE jaccard > $threshold
+            MERGE (i1)-[r:SIMILAR_TO]->(i2)
+            SET r.score = jaccard, r.computed_at = $now
+            """,
+            {
+                "window_start": window_start,
+                "threshold": score_threshold,
+                "max_topic_items": max_topic_items,
+                "now": now,
+            },
+        )
+        self._execute(
+            """
+            MATCH (i1:Item)-[r:SIMILAR_TO]->(i2:Item)
+            OPTIONAL MATCH (i1)-[:ABOUT]->(t:Topic)<-[:ABOUT]-(i2)
+            WHERE t.item_count <= $max_topic_items
+            WITH r, i1, i2, count(t) AS shared_topics
+            OPTIONAL MATCH (i1)-[:ABOUT]->(t1:Topic)
+            WHERE t1.item_count <= $max_topic_items
+            WITH r, i1, i2, shared_topics, count(t1) AS n1
+            OPTIONAL MATCH (i2)-[:ABOUT]->(t2:Topic)
+            WHERE t2.item_count <= $max_topic_items
+            WITH r, i1, i2, shared_topics, n1, count(t2) AS n2
+            WITH r, i1, i2, shared_topics,
+                 CASE WHEN (n1 + n2 - shared_topics) > 0
+                      THEN CAST(shared_topics AS DOUBLE) / (n1 + n2 - shared_topics)
+                      ELSE 0.0 END AS jaccard
+            WHERE NOT (
+                shared_topics >= 2
+                AND jaccard > $threshold
+                AND i1.published_at >= $window_start
+                AND i2.published_at >= $window_start
             )
+            DELETE r
+            """,
+            {
+                "threshold": score_threshold,
+                "window_start": window_start,
+                "max_topic_items": max_topic_items,
+            },
+        )
 
     def get_similar_items(self, item_id: str, limit: int = 20) -> list[dict[str, Any]] | None:
         rows = _rows(

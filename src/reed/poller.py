@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 _MAX_EXTRACTIONS_PER_POLL = 10
 _EXTRACTION_CONCURRENCY = 4
 
+# A failed derived-edge recompute is retried after this delay, doubling per
+# consecutive failure up to the normal recompute interval.
+_RECOMPUTE_BACKOFF_BASE_MINUTES = 5
+
 
 class FeedPoller:
     """Async background worker that polls subscribed feeds on schedule."""
@@ -37,6 +41,8 @@ class FeedPoller:
         self._extractor = make_extractor()
         self._last_recompute: datetime | None = None
         self._recompute_in_progress = False
+        self._recompute_failures = 0
+        self._next_recompute_attempt: datetime | None = None
 
     async def start(self) -> None:
         self._running = True
@@ -77,6 +83,8 @@ class FeedPoller:
         now = datetime.now(UTC)
         if self._last_recompute is not None and now < self._last_recompute + interval:
             return
+        if self._next_recompute_attempt is not None and now < self._next_recompute_attempt:
+            return
         await self.recompute_derived_edges(config)
 
     async def recompute_derived_edges(self, config: dict[str, Any] | None = None) -> None:
@@ -97,6 +105,19 @@ class FeedPoller:
                 topic_share_floor=int(config["similarity_topic_share_floor"]),
             )
             self._last_recompute = datetime.now(UTC)
+            self._recompute_failures = 0
+            self._next_recompute_attempt = None
+        except Exception:
+            # Without this the poll loop retries a failing recompute every cycle.
+            self._recompute_failures += 1
+            delay = min(
+                timedelta(
+                    minutes=_RECOMPUTE_BACKOFF_BASE_MINUTES * 2 ** (self._recompute_failures - 1)
+                ),
+                timedelta(minutes=get_settings().derived_edge_interval),
+            )
+            self._next_recompute_attempt = datetime.now(UTC) + delay
+            raise
         finally:
             self._recompute_in_progress = False
 

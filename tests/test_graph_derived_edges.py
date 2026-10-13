@@ -412,3 +412,77 @@ class TestTopicDominanceCap:
             )
         )
         assert rows == []
+
+
+_CSR_ASSERTION = (
+    'Assertion failed in file ".../storage/table/csr_node_group.cpp" on line 411: KU_UNREACHABLE'
+)
+
+
+class TestSimilarToCorruptionRecovery:
+    """Kuzu can leave the SIMILAR_TO CSR in a state where any bulk write trips
+    `KU_UNREACHABLE` in csr_node_group.cpp. SIMILAR_TO is derived data, so the
+    recompute rebuilds the rel table and retries rather than failing forever."""
+
+    @staticmethod
+    def _seed_pair(graph, now):
+        i1 = _make_item(graph, "i1", "One", now)
+        i2 = _make_item(graph, "i2", "Two", now)
+        graph.enrich_item(i1, [("machine learning", 0.05), ("neural networks", 0.06)])
+        graph.enrich_item(i2, [("machine learning", 0.05), ("neural networks", 0.06)])
+        return i1, i2
+
+    @staticmethod
+    def _similar_count(graph):
+        return _rows(graph._execute("MATCH ()-[r:SIMILAR_TO]->() RETURN count(r) AS n"))[0]["n"]
+
+    def test_csr_assertion_rebuilds_similar_to_and_retries(self, graph, monkeypatch):
+        now = datetime.now(UTC)
+        self._seed_pair(graph, now)
+        real_execute = graph._execute
+        calls = {"failed": 0, "dropped": 0}
+
+        def flaky(query, params=None):
+            if "MERGE (i1)-[r:SIMILAR_TO]" in query and calls["failed"] == 0:
+                calls["failed"] += 1
+                raise RuntimeError(_CSR_ASSERTION)
+            if "DROP TABLE SIMILAR_TO" in query:
+                calls["dropped"] += 1
+            return real_execute(query, params)
+
+        monkeypatch.setattr(graph, "_execute", flaky)
+
+        graph.recompute_derived_edges(window_days=90, score_threshold=0.1, now=now)
+
+        assert calls == {"failed": 1, "dropped": 1}
+        assert self._similar_count(graph) == 1
+
+    def test_unrelated_runtime_error_is_not_swallowed(self, graph, monkeypatch):
+        now = datetime.now(UTC)
+        self._seed_pair(graph, now)
+        real_execute = graph._execute
+
+        def boom(query, params=None):
+            if "MERGE (i1)-[r:SIMILAR_TO]" in query:
+                raise RuntimeError("Out of memory")
+            return real_execute(query, params)
+
+        monkeypatch.setattr(graph, "_execute", boom)
+
+        with pytest.raises(RuntimeError, match="Out of memory"):
+            graph.recompute_derived_edges(window_days=90, score_threshold=0.1, now=now)
+
+    def test_persistent_csr_assertion_after_rebuild_raises(self, graph, monkeypatch):
+        now = datetime.now(UTC)
+        self._seed_pair(graph, now)
+        real_execute = graph._execute
+
+        def always(query, params=None):
+            if "MERGE (i1)-[r:SIMILAR_TO]" in query:
+                raise RuntimeError(_CSR_ASSERTION)
+            return real_execute(query, params)
+
+        monkeypatch.setattr(graph, "_execute", always)
+
+        with pytest.raises(RuntimeError, match="KU_UNREACHABLE"):
+            graph.recompute_derived_edges(window_days=90, score_threshold=0.1, now=now)
