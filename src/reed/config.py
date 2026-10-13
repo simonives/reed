@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     poll_default_interval: int = 60  # minutes
     derived_edge_interval: int = 360  # minutes (6 hours)
     topic_backend: str = "yake"  # yake | spacy | llm
+    # Kuzu page-cache cap. Kuzu's own default is ~80% of system RAM, which
+    # starves small hosts; 0 restores that default.
+    kuzu_buffer_pool_mb: int = 512
     host: str = "0.0.0.0"
     port: int = 8000
 

@@ -129,9 +129,12 @@ class GraphService:
     The REST API and MCP server import this; neither touches Kuzu directly.
     """
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, buffer_pool_mb: int | None = None) -> None:
         pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = kuzu.Database(db_path)
+        if buffer_pool_mb:
+            self._db = kuzu.Database(db_path, buffer_pool_size=buffer_pool_mb * 1024 * 1024)
+        else:
+            self._db = kuzu.Database(db_path)
         self._conn = kuzu.Connection(self._db)
         self._conn_lock = threading.RLock()
         self._ensure_schema()

@@ -21,3 +21,9 @@ def test_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     s = Settings()
     assert s.api_key == "secret"
     assert s.port == 9000
+
+
+def test_kuzu_buffer_pool_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert Settings().kuzu_buffer_pool_mb == 512
+    monkeypatch.setenv("REED_KUZU_BUFFER_POOL_MB", "256")
+    assert Settings().kuzu_buffer_pool_mb == 256
