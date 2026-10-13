@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _graph, _poller, _poller_task
     settings = get_settings()
 
-    _graph = GraphService(settings.data_path)
+    _graph = GraphService(settings.data_path, buffer_pool_mb=settings.kuzu_buffer_pool_mb)
     app.state.graph = _graph
 
     _poller = FeedPoller(_graph)
