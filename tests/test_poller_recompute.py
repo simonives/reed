@@ -93,3 +93,52 @@ async def test_recompute_derived_edges_updates_last_recompute_timestamp(graph):
         after = datetime.now(UTC)
     assert poller._last_recompute is not None
     assert before <= poller._last_recompute <= after
+
+
+@pytest.mark.asyncio
+async def test_failed_recompute_backs_off_instead_of_retrying_every_cycle(graph):
+    poller = FeedPoller(graph)
+    with patch.object(graph, "recompute_derived_edges", side_effect=RuntimeError("boom")) as m:
+        with pytest.raises(RuntimeError):
+            await poller._maybe_recompute_edges()
+        assert m.call_count == 1
+        # The next poll cycle (60s later) must not retry.
+        await poller._maybe_recompute_edges()
+        await poller._maybe_recompute_edges()
+    assert m.call_count == 1
+    assert poller._recompute_in_progress is False
+
+
+@pytest.mark.asyncio
+async def test_recompute_backoff_grows_then_caps_at_derived_edge_interval(graph, monkeypatch):
+    monkeypatch.setenv("REED_DERIVED_EDGE_INTERVAL", "360")
+    from reed.config import get_settings
+
+    get_settings.cache_clear()
+    poller = FeedPoller(graph)
+    delays = []
+    with patch.object(graph, "recompute_derived_edges", side_effect=RuntimeError("boom")):
+        for _ in range(12):
+            poller._next_recompute_attempt = None  # force the gate open
+            before = datetime.now(UTC)
+            with pytest.raises(RuntimeError):
+                await poller.recompute_derived_edges()
+            delays.append(poller._next_recompute_attempt - before)
+    assert delays[0] < delays[1] < delays[2]
+    assert max(delays) <= timedelta(minutes=360, seconds=5)
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_successful_recompute_clears_backoff(graph):
+    poller = FeedPoller(graph)
+    with (
+        patch.object(graph, "recompute_derived_edges", side_effect=RuntimeError("boom")),
+        pytest.raises(RuntimeError),
+    ):
+        await poller.recompute_derived_edges()
+    assert poller._next_recompute_attempt is not None
+    with patch.object(graph, "recompute_derived_edges"):
+        await poller.recompute_derived_edges()  # manual trigger bypasses the gate
+    assert poller._next_recompute_attempt is None
+    assert poller._recompute_failures == 0
