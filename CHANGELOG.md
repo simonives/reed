@@ -11,6 +11,8 @@ Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-10-14
+
 ### Fixed
 - Kuzu's page cache defaulted to about 80% of system RAM, so Reed's memory grew to roughly 3 GB (including swap) on a 3.8 GB host. The cache is now capped by `REED_KUZU_BUFFER_POOL_MB` (default 512, `0` restores Kuzu's default). A recompute over a 463 MB library completes in 2.2 s at that cap
 
