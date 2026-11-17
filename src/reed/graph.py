@@ -1665,6 +1665,24 @@ class GraphService:
             )
         )
 
+    def get_unenriched_item_ids(self) -> list[str]:
+        """Ids of items not yet enriched. Ids only, so a large backlog stays small in memory."""
+        rows = _rows(self._execute("MATCH (i:Item) WHERE i.enriched_at IS NULL RETURN i.id AS id"))
+        return [str(r["id"]) for r in rows]
+
+    def get_items_for_enrichment(self, ids: list[str]) -> list[dict[str, Any]]:
+        """Title, summary and content for the given item ids (one backfill batch)."""
+        if not ids:
+            return []
+        return _rows(
+            self._execute(
+                "MATCH (i:Item) WHERE i.id IN $ids "
+                "RETURN i.id AS id, i.title AS title, "
+                "i.summary AS summary, i.content AS content",
+                {"ids": ids},
+            )
+        )
+
     def get_topics(
         self, limit: int = 50, offset: int = 0, sort: str = "item_count"
     ) -> tuple[list[dict[str, Any]], int]:
