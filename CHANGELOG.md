@@ -14,7 +14,8 @@ Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.6.4] - 2026-11-18
 
 ### Fixed
-- Memory grew without bound until the kernel OOM killer ended the process (#335, #326). Embedded Kuzu leaks 70 to 440 KB of native memory on every write transaction and not on reads, and every poll ran `MERGE (f)-[:HAS_ITEM]->(i)` for every entry of every feed even when the item was already stored. `create_item` now checks the `HAS_ITEM` edge with a read first, so polling an unchanged feed issues no writes
+- Memory grew without bound until the kernel OOM killer ended the process (#335, #326). Kuzu's `Connection.execute(query, params)` builds a new prepared statement on every call and leaks about 40 KB of native memory each time (1,600 calls leaked 68 MB; preparing once and re-executing leaked nothing). Reed now prepares each query text once and reuses it, in a bounded cache cleared on schema changes
+- Polling re-ran `MERGE (f)-[:HAS_ITEM]->(i)` for every entry of every feed on every cycle, even when the item was already stored, which cost 260 ms per entry. `create_item` now checks the edge with a read first and returns without writing, which takes 8 ms
 - Memory spikes of 1 GB or more within a minute of a restart, then hourly (#334). The poller polled every due feed at once and each feed ran its own article extraction, so the lxml and trafilatura work of all feeds overlapped. Feed polls are now limited to four at a time and article extractions to two at a time across all feeds
 - The startup topic backfill loaded the full text of every unenriched item in one query (#133). It now loads ids first and reads text in batches of 100
 

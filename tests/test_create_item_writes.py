@@ -102,3 +102,61 @@ class TestCreateItemWrites:
 
     def test_feed_has_item_is_false_for_unknown_guid(self, graph):
         assert not graph.feed_has_item(FEED_A, "missing")
+
+
+class TestPreparedStatementCache:
+    """Connection.execute(query, params) prepares a new statement per call and leaks
+    about 40 KB of native memory each time, so Reed prepares each query text once."""
+
+    def test_repeated_parameterised_query_is_prepared_once(self, graph, monkeypatch):
+        _create(graph, FEED_A)
+        prepared: list[str] = []
+        real = graph._conn._prepare
+
+        def spy(query, *args, **kwargs):
+            prepared.append(query)
+            return real(query, *args, **kwargs)
+
+        monkeypatch.setattr(graph._conn, "_prepare", spy)
+        for _ in range(50):
+            assert graph.feed_has_item(FEED_A, "guid-1")
+
+        assert len(prepared) <= 1
+
+    def test_cached_statement_uses_each_calls_parameters(self, graph):
+        _create(graph, FEED_A, "guid-1")
+        _create(graph, FEED_B, "guid-2")
+        for _ in range(3):
+            assert graph.feed_has_item(FEED_A, "guid-1")
+            assert not graph.feed_has_item(FEED_A, "guid-2")
+            assert graph.feed_has_item(FEED_B, "guid-2")
+            assert not graph.feed_has_item(FEED_B, "guid-1")
+
+    def test_cache_is_bounded(self, graph, monkeypatch):
+        import reed.graph as graph_module
+
+        monkeypatch.setattr(graph_module, "_PREPARED_CACHE_SIZE", 8)
+        for i in range(40):
+            graph._execute(f"RETURN $x AS v{i}", {"x": i})
+        assert len(graph._prepared) <= 8
+
+    def test_schema_change_clears_cached_statements(self, graph):
+        graph._execute("MATCH (i:Item {guid: $g}) RETURN count(i) AS cnt", {"g": "x"})
+        assert graph._prepared
+
+        graph._execute("DROP TABLE SIMILAR_TO")
+        assert not graph._prepared
+
+        graph._execute(
+            "CREATE REL TABLE IF NOT EXISTS SIMILAR_TO"
+            "(FROM Item TO Item, score DOUBLE, computed_at TIMESTAMP)"
+        )
+        rows = graph._execute("MATCH (i:Item {guid: $g}) RETURN count(i) AS cnt", {"g": "x"})
+        assert rows.get_next() == [0]
+
+    def test_close_clears_the_cache(self, tmp_path):
+        g = GraphService(str(tmp_path / "close.kuzu"))
+        g._execute("MATCH (i:Item {guid: $g}) RETURN count(i) AS cnt", {"g": "x"})
+        assert g._prepared
+        g.close()
+        assert not g._prepared

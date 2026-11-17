@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import html as _html
 import json
@@ -119,6 +120,19 @@ _SIMILAR_TO_DDL = (
 # internal assertion; the only recovery is to rebuild the table.
 _CSR_CORRUPTION_MARKER = "csr_node_group.cpp"
 
+# Kuzu's Connection.execute(query, params) builds a new PreparedStatement on every call
+# and leaks about 40 KB of native memory each time (measured: 1,600 calls leak 68 MB;
+# preparing once and re-executing leaks nothing). Statements are therefore prepared once
+# per distinct query text and reused. The cache is a bounded LRU so queries whose text
+# varies per call cannot grow it without limit.
+_PREPARED_CACHE_SIZE = 256
+
+# Statements that change the catalog invalidate every prepared statement.
+_SCHEMA_CHANGE = re.compile(
+    r"^\s*(CREATE\s+(NODE|REL)\s+TABLE|DROP|ALTER|INSTALL|LOAD|CALL\s+(CREATE|DROP)_)",
+    re.IGNORECASE,
+)
+
 _CLUSTER_TOPICS_SHOWN = 25
 _UNCLUSTERED_ID = -1
 
@@ -137,15 +151,26 @@ class GraphService:
             self._db = kuzu.Database(db_path)
         self._conn = kuzu.Connection(self._db)
         self._conn_lock = threading.RLock()
+        self._prepared: collections.OrderedDict[str, Any] = collections.OrderedDict()
         self._ensure_schema()
 
     def _execute(
         self, query: str, params: dict[str, Any] | None = None
     ) -> kuzu.QueryResult | list[kuzu.QueryResult]:
         with self._conn_lock:
-            if params is not None:
-                return self._conn.execute(query, params)
-            return self._conn.execute(query)
+            if _SCHEMA_CHANGE.match(query):
+                self._prepared.clear()
+            if not params:
+                return self._conn.execute(query)
+            statement = self._prepared.get(query)
+            if statement is None:
+                statement = self._conn._prepare(query)
+                self._prepared[query] = statement
+                if len(self._prepared) > _PREPARED_CACHE_SIZE:
+                    self._prepared.popitem(last=False)
+            else:
+                self._prepared.move_to_end(query)
+            return self._conn.execute(statement, params)
 
     def _ensure_schema(self) -> None:
         tables = self._table_names()
@@ -2286,5 +2311,6 @@ class GraphService:
         # underlying Kuzu connection out from under it, segfaulting the
         # process rather than raising a catchable Python exception.
         with self._conn_lock:
+            self._prepared.clear()
             self._conn.close()
             self._db.close()
