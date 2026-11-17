@@ -636,6 +636,14 @@ class GraphService:
     def item_exists(self, guid: str) -> bool:
         return self._exists("MATCH (i:Item {guid: $guid}) RETURN count(i) AS cnt", {"guid": guid})
 
+    def feed_has_item(self, feed_url: str, guid: str) -> bool:
+        """True when the feed already has a HAS_ITEM edge to the item with this guid."""
+        return self._exists(
+            "MATCH (:Feed {url: $feed_url})-[:HAS_ITEM]->(i:Item {guid: $guid}) "
+            "RETURN count(i) AS cnt",
+            {"feed_url": feed_url, "guid": guid},
+        )
+
     def create_item(
         self,
         feed_url: str,
@@ -655,6 +663,12 @@ class GraphService:
         feeds, or resubscription after delete). The HAS_ITEM edge is always created
         if absent. Returns the new item's id, or None if the item already existed.
         """
+        # Polling calls this for every entry of every feed on every cycle, and almost all
+        # entries are already stored and linked. Kuzu leaks native memory on every write
+        # transaction (70 KB or more each, measured) but not on reads, so the common case
+        # is decided by a read and issues no writes at all.
+        if self.feed_has_item(feed_url, guid):
+            return None
         item_id: str | None = None
         if not self.item_exists(guid):
             if not summary and content:

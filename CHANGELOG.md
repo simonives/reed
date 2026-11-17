@@ -11,9 +11,12 @@ Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-11-18
+
 ### Fixed
-- Memory spikes of 1 GB or more within a minute of a restart, then hourly. The poller polled every due feed at once and each feed ran its own article extraction, so the lxml and trafilatura work of all feeds overlapped. Feed polls are now limited to four at a time and article extractions to two at a time across all feeds
-- The startup topic backfill loaded the full text of every unenriched item in one query. It now loads ids first and reads text in batches of 100
+- Memory grew without bound until the kernel OOM killer ended the process (#335, #326). Embedded Kuzu leaks 70 to 440 KB of native memory on every write transaction and not on reads, and every poll ran `MERGE (f)-[:HAS_ITEM]->(i)` for every entry of every feed even when the item was already stored. `create_item` now checks the `HAS_ITEM` edge with a read first, so polling an unchanged feed issues no writes
+- Memory spikes of 1 GB or more within a minute of a restart, then hourly (#334). The poller polled every due feed at once and each feed ran its own article extraction, so the lxml and trafilatura work of all feeds overlapped. Feed polls are now limited to four at a time and article extractions to two at a time across all feeds
+- The startup topic backfill loaded the full text of every unenriched item in one query (#133). It now loads ids first and reads text in batches of 100
 
 ## [0.6.3] - 2026-10-14
 
