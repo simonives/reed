@@ -24,7 +24,18 @@ logger = logging.getLogger(__name__)
 # Caps on reader-mode extraction per feed per poll cycle, so one busy feed
 # cannot stall the polling loop.
 _MAX_EXTRACTIONS_PER_POLL = 10
-_EXTRACTION_CONCURRENCY = 4
+
+# Global ceilings, shared by every feed in flight. Without them a poll cycle
+# that finds many feeds due at once (every restart, and hourly thereafter
+# because feeds polled together fall due together) fetched, parsed and
+# extracted for all of them concurrently, and the native memory from lxml and
+# trafilatura peaked at the sum of every feed's work.
+_POLL_CONCURRENCY = 4
+_EXTRACTION_CONCURRENCY = 2
+
+# Startup topic backfill loads item text in batches of this size, so a large
+# unenriched backlog is never held in memory at once.
+_BACKFILL_BATCH = 100
 
 # A failed derived-edge recompute is retried after this delay, doubling per
 # consecutive failure up to the normal recompute interval.
@@ -43,6 +54,8 @@ class FeedPoller:
         self._recompute_in_progress = False
         self._recompute_failures = 0
         self._next_recompute_attempt: datetime | None = None
+        self._poll_slots = asyncio.Semaphore(_POLL_CONCURRENCY)
+        self._extract_slots = asyncio.Semaphore(_EXTRACTION_CONCURRENCY)
 
     async def start(self) -> None:
         self._running = True
@@ -145,10 +158,13 @@ class FeedPoller:
         if not due:
             return
         logger.debug("Polling %d due feed(s)", len(due))
-        await asyncio.gather(
-            *(self._poll_feed(feed, now, self._http, config) for feed in due),
-            return_exceptions=True,
-        )
+        http = self._http
+
+        async def poll_bounded(feed: dict[str, Any]) -> None:
+            async with self._poll_slots:
+                await self._poll_feed(feed, now, http, config)
+
+        await asyncio.gather(*(poll_bounded(feed) for feed in due), return_exceptions=True)
 
     def _is_due(self, feed: dict[str, Any], now: datetime, config: dict[str, Any]) -> bool:
         last_fetched = feed.get("last_fetched_at")
@@ -225,10 +241,8 @@ class FeedPoller:
     async def _extract_new_items(
         self, new_items: list[tuple[str, str, str]], http: httpx.AsyncClient
     ) -> None:
-        semaphore = asyncio.Semaphore(_EXTRACTION_CONCURRENCY)
-
         async def extract_one(item_id: str, item_url: str) -> None:
-            async with semaphore:
+            async with self._extract_slots:
                 content = await extract_article(item_url, http)
             if content:
                 await asyncio.to_thread(
@@ -299,17 +313,21 @@ class FeedPoller:
                 logger.warning("Topic enrichment failed for item %s", item_id)
 
     async def _backfill_topics(self) -> None:
-        unenriched = await asyncio.to_thread(self._graph.get_unenriched_items)
-        if not unenriched:
+        ids = await asyncio.to_thread(self._graph.get_unenriched_item_ids)
+        if not ids:
             return
-        logger.info("Backfilling topics for %d item(s)", len(unenriched))
-        for item in unenriched:
-            text = item_text(
-                item.get("title") or "",
-                item.get("summary") or "",
-                item.get("content") or "",
+        logger.info("Backfilling topics for %d item(s)", len(ids))
+        for start in range(0, len(ids), _BACKFILL_BATCH):
+            batch = await asyncio.to_thread(
+                self._graph.get_items_for_enrichment, ids[start : start + _BACKFILL_BATCH]
             )
-            try:
-                await asyncio.to_thread(self._enrich_item, item["id"], text)
-            except Exception:
-                logger.warning("Topic backfill failed for item %s", item["id"])
+            for item in batch:
+                text = item_text(
+                    item.get("title") or "",
+                    item.get("summary") or "",
+                    item.get("content") or "",
+                )
+                try:
+                    await asyncio.to_thread(self._enrich_item, item["id"], text)
+                except Exception:
+                    logger.warning("Topic backfill failed for item %s", item["id"])

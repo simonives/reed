@@ -11,6 +11,10 @@ Reed uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Memory spikes of 1 GB or more within a minute of a restart, then hourly. The poller polled every due feed at once and each feed ran its own article extraction, so the lxml and trafilatura work of all feeds overlapped. Feed polls are now limited to four at a time and article extractions to two at a time across all feeds
+- The startup topic backfill loaded the full text of every unenriched item in one query. It now loads ids first and reads text in batches of 100
+
 ## [0.6.3] - 2026-10-14
 
 ### Fixed
