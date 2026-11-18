@@ -665,7 +665,7 @@ class GraphService:
         poller tell a restart from a first run instead of recomputing every start."""
         rows = _rows(self._execute("MATCH ()-[r:SIMILAR_TO]->() RETURN max(r.computed_at) AS t"))
         t = rows[0]["t"] if rows else None
-        if t is None:
+        if not isinstance(t, datetime):
             return None
         return t if t.tzinfo else t.replace(tzinfo=UTC)
 
