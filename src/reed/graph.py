@@ -2398,6 +2398,22 @@ class GraphService:
         )
         return rows
 
+    def checkpoint(self) -> None:
+        """Flush the write-ahead log into the main file.
+
+        Kuzu holds un-checkpointed write data in memory, and by default only
+        checkpoints once the log reaches 16 MB. Measured on a production-sized copy,
+        checkpointing every 50 writes cut native growth per write from about 32 KB
+        to about 3 to 5 KB, so the poller calls this after each batch of writes.
+        """
+        with self._conn_lock:
+            if self._closed:
+                return
+            try:
+                self._conn.execute("CHECKPOINT")
+            except Exception:
+                logger.warning("CHECKPOINT failed", exc_info=True)
+
     def close(self) -> None:
         # Acquire the same lock _execute() uses: without it, close() can run
         # concurrently with an in-flight query on another thread (e.g. the
