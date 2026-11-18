@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 # cannot stall the polling loop.
 _MAX_EXTRACTIONS_PER_POLL = 10
 
+# A feed past ten consecutive failures is polled at most once a day.
+_MAX_BACKOFF_MINUTES = 24 * 60
+
 # Global ceilings, shared by every feed in flight. Without them a poll cycle
 # that finds many feeds due at once (every restart, and hourly thereafter
 # because feeds polled together fall due together) fetched, parsed and
@@ -40,6 +43,18 @@ _BACKFILL_BATCH = 100
 # A failed derived-edge recompute is retried after this delay, doubling per
 # consecutive failure up to the normal recompute interval.
 _RECOMPUTE_BACKOFF_BASE_MINUTES = 5
+
+
+def _backoff_minutes(interval_min: int, consecutive_errors: int) -> int:
+    """Poll interval after repeated failures (docs/architecture/feed-poller.md):
+    1-2 errors normal, 3-5 double, 6-10 quadruple, more than 10 once a day."""
+    if consecutive_errors > 10:
+        return max(interval_min, _MAX_BACKOFF_MINUTES)
+    if consecutive_errors >= 6:
+        return interval_min * 4
+    if consecutive_errors >= 3:
+        return interval_min * 2
+    return interval_min
 
 
 class FeedPoller:
@@ -175,6 +190,7 @@ class FeedPoller:
         if last_fetched.tzinfo is None:
             last_fetched = last_fetched.replace(tzinfo=UTC)
         interval_min = effective_feed_settings(feed, config)["poll_interval_minutes"]
+        interval_min = _backoff_minutes(interval_min, int(feed.get("consecutive_errors") or 0))
         return bool(now >= last_fetched + timedelta(minutes=interval_min))
 
     async def _poll_feed(
@@ -271,6 +287,8 @@ class FeedPoller:
                     continue
                 # Namespace by feed URL so identical titles across feeds don't merge items.
                 guid = f"{feed_url}|{title}"
+            if self._graph.feed_has_item(feed_url, guid):
+                continue  # already ingested: skip the HTML parsing below
             item_url = entry.get("link", "")
             title = entry.get("title", "")
             summary = entry.get("summary", "")
