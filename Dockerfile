@@ -13,9 +13,15 @@ RUN npm run build
 FROM python:3.12-slim AS app
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+# Install the locked dependency set first (exact versions from uv.lock), then
+# the application itself without re-resolving anything.
+COPY pyproject.toml uv.lock README.md ./
+RUN pip install --no-cache-dir uv \
+    && uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.txt \
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
+    && pip uninstall -y uv && rm /tmp/requirements.txt
 COPY src/ ./src/
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 

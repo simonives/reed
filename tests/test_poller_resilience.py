@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -120,22 +119,27 @@ class TestParallelPolling:
             )
 
         poller = FeedPoller(graph)
-        poll_times: list[float] = []
+        in_flight = 0
+        peak = 0
+        finished = 0
 
         async def slow_poll(feed, now, http, config):
+            nonlocal in_flight, peak, finished
+            in_flight += 1
+            peak = max(peak, in_flight)
             await asyncio.sleep(0.05)
-            poll_times.append(time.monotonic())
+            in_flight -= 1
+            finished += 1
 
         poller._poll_feed = slow_poll
 
         with patch.object(poller, "_http", new=AsyncMock()):
-            start = time.monotonic()
             await poller._poll_due_feeds()
-            elapsed = time.monotonic() - start
 
-        assert len(poll_times) == 3
-        # Concurrent: total time should be much less than 3 × 0.05s sequential
-        assert elapsed < 0.12
+        assert finished == 3
+        # Concurrent: the polls overlapped. Asserting overlap rather than
+        # elapsed time keeps this independent of CI machine speed.
+        assert peak > 1
 
 
 class TestGuidTitleFallback:
