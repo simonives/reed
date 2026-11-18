@@ -163,6 +163,7 @@ class FeedPoller:
                 max_topic_share=float(config["similarity_max_topic_share"]),
                 topic_share_floor=int(config["similarity_topic_share_floor"]),
             )
+            await self._in_thread(self._graph.checkpoint)
             self._last_recompute = datetime.now(UTC)
             self._recompute_failures = 0
             self._next_recompute_attempt = None
@@ -221,6 +222,7 @@ class FeedPoller:
                 await self._in_thread(
                     self._graph.update_feed_poll_metadata_batch, list(pending.values())
                 )
+                await self._in_thread(self._graph.checkpoint)
 
     def _is_due(self, feed: dict[str, Any], now: datetime, config: dict[str, Any]) -> bool:
         last_fetched = feed.get("last_fetched_at")
@@ -397,3 +399,4 @@ class FeedPoller:
                     await self._in_thread(self._enrich_item, item["id"], text)
                 except Exception:
                     logger.warning("Topic backfill failed for item %s", item["id"])
+            await self._in_thread(self._graph.checkpoint)
