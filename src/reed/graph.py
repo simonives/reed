@@ -129,7 +129,7 @@ _PREPARED_CACHE_SIZE = 256
 
 # Statements that change the catalog invalidate every prepared statement.
 _SCHEMA_CHANGE = re.compile(
-    r"^\s*(CREATE\s+(NODE|REL)\s+TABLE|DROP|ALTER|INSTALL|LOAD|CALL\s+(CREATE|DROP)_)",
+    r"^\s*(CREATE\s+(NODE|REL)\s+TABLE|DROP|ALTER|INSTALL|LOAD|CALL\s+(CREATE|DROP)_FTS_INDEX)",
     re.IGNORECASE,
 )
 
@@ -1458,13 +1458,21 @@ class GraphService:
                 self._execute("COMMIT")
                 return result
             except Exception:
-                self._execute("ROLLBACK")
+                # Keep the original error: a failed statement can already have
+                # ended the transaction, and ROLLBACK would then mask it.
+                try:
+                    self._execute("ROLLBACK")
+                except RuntimeError:
+                    logger.warning("ROLLBACK after failed restore also failed", exc_info=True)
                 raise
 
     def _restore_data_inner(self, backup: dict[str, Any]) -> dict[str, Any]:
         # Delete Topic edges and nodes before clearing the rest (order matters
         # for referential integrity)
-        self._execute("MATCH ()-[r:ABOUT]->() DELETE r")
+        # Derived edges (RELATED_TO between topics, SIMILAR_TO between items)
+        # must go too: a plain DELETE of a node that still has edges fails.
+        for rel in ("ABOUT", "RELATED_TO", "SIMILAR_TO"):
+            self._execute(f"MATCH ()-[r:{rel}]->() DELETE r")
         self._execute("MATCH (t:Topic) DELETE t")
         # Delete edges before nodes (order is mandatory).
         for rel in ("TAGGED", "FEED_TAGGED", "HAS_NOTE", "HAS_ITEM"):
