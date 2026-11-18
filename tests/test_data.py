@@ -548,3 +548,34 @@ class TestExportDataIncludeConfig:
         shared_keys = set(with_config.keys()) & set(without_config.keys())
         for key in ("version", "feeds", "items", "notes", "tags", "topics", "about_edges"):
             assert key in shared_keys
+
+
+class TestRestoreWithDerivedEdges:
+    """restore_data must clear derived edges before topics (#339)."""
+
+    def test_restore_succeeds_with_related_to_edge(self, tmp_path):
+        from datetime import UTC, datetime
+
+        gs = GraphService(str(tmp_path / "test.kuzu"))
+        _seed(gs)
+        now = datetime.now(UTC)
+        gs._execute("CREATE (:Topic {id: 'ta', name: 'alpha', item_count: 1})")
+        gs._execute("CREATE (:Topic {id: 'tb', name: 'beta', item_count: 1})")
+        gs._execute(
+            "MATCH (a:Topic {name: 'alpha'}), (b:Topic {name: 'beta'}) "
+            "CREATE (a)-[:RELATED_TO {weight: 0.5, computed_at: $t}]->(b)",
+            {"t": now},
+        )
+        backup = gs.export_data()
+        gs.restore_data(backup)
+        remaining = gs._execute("MATCH ()-[r:RELATED_TO]->() RETURN count(r) AS n")
+        assert remaining.get_next()[0] == 0
+
+    def test_original_error_survives_failed_rollback(self, tmp_path):
+        gs = GraphService(str(tmp_path / "test.kuzu"))
+        _seed(gs)
+        backup = gs.export_data()
+        backup["config"] = 5  # forces a non-Kuzu error inside the restore
+        with pytest.raises(Exception) as exc:
+            gs.restore_data(backup)
+        assert "ROLLBACK" not in str(exc.value)

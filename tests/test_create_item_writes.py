@@ -160,3 +160,29 @@ class TestPreparedStatementCache:
         assert g._prepared
         g.close()
         assert not g._prepared
+
+
+class TestSchemaChangeRegex:
+    """Projected-graph calls must not invalidate prepared statements (#337)."""
+
+    def test_projected_graph_calls_do_not_match(self):
+        from reed.graph import _SCHEMA_CHANGE
+
+        for q in (
+            "CALL drop_projected_graph('topic_clusters')",
+            "CALL project_graph('x', ['Topic'], ['RELATED_TO'])",
+            "CALL page_rank('topic_centrality') RETURN node",
+        ):
+            assert not _SCHEMA_CHANGE.match(q), q
+
+    def test_catalog_changes_still_match(self):
+        from reed.graph import _SCHEMA_CHANGE
+
+        for q in (
+            "DROP TABLE SIMILAR_TO",
+            "CREATE REL TABLE SIMILAR_TO(FROM Item TO Item)",
+            "CALL DROP_FTS_INDEX('Item', 'item_fts')",
+            "CALL CREATE_FTS_INDEX('Item', 'item_fts', ['title'])",
+            "INSTALL algo",
+        ):
+            assert _SCHEMA_CHANGE.match(q), q
