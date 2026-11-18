@@ -105,19 +105,17 @@ class TestEnrichItem:
 class TestGetUnenrichedItems:
     def test_returns_items_with_no_about_edges(self, seeded):
         graph, item_id = seeded
-        unenriched = graph.get_unenriched_items()
-        assert any(r["id"] == item_id for r in unenriched)
+        assert item_id in graph.get_unenriched_item_ids()
 
     def test_excludes_enriched_items(self, seeded):
         graph, item_id = seeded
         graph.enrich_item(item_id, [("test topic", 0.1)])
-        unenriched = graph.get_unenriched_items()
-        assert not any(r["id"] == item_id for r in unenriched)
+        assert item_id not in graph.get_unenriched_item_ids()
 
     def test_returns_text_fields(self, seeded):
         graph, item_id = seeded
-        unenriched = graph.get_unenriched_items()
-        row = next(r for r in unenriched if r["id"] == item_id)
+        rows = graph.get_items_for_enrichment(graph.get_unenriched_item_ids())
+        row = next(r for r in rows if r["id"] == item_id)
         assert "title" in row
         assert "summary" in row
         assert "content" in row
@@ -341,9 +339,9 @@ class TestEnrichedAt:
             published_at=None,
             fetched_at=datetime.now(UTC),
         )
-        assert any(r["id"] == item_id for r in graph.get_unenriched_items())
+        assert item_id in graph.get_unenriched_item_ids()
         graph.enrich_item(item_id, [("neural networks", 0.1)])
-        assert not any(r["id"] == item_id for r in graph.get_unenriched_items())
+        assert item_id not in graph.get_unenriched_item_ids()
 
     def test_get_unenriched_includes_zero_keyword_before_enrich(self, graph):
         feed_url = "https://example.com/feed"
@@ -359,9 +357,9 @@ class TestEnrichedAt:
             published_at=None,
             fetched_at=datetime.now(UTC),
         )
-        assert any(r["id"] == item_id for r in graph.get_unenriched_items())
+        assert item_id in graph.get_unenriched_item_ids()
         graph.enrich_item(item_id, [])
-        assert not any(r["id"] == item_id for r in graph.get_unenriched_items())
+        assert item_id not in graph.get_unenriched_item_ids()
 
 
 class TestGetTopicItems:

@@ -67,9 +67,9 @@ async def test_backfill_topics_enriches_unenriched_items(graph):
         published_at=None,
         fetched_at=datetime.now(UTC),
     )
-    assert item_id in [r["id"] for r in graph.get_unenriched_items()]
+    assert item_id in graph.get_unenriched_item_ids()
     await poller._backfill_topics()
-    assert item_id not in [r["id"] for r in graph.get_unenriched_items()]
+    assert item_id not in graph.get_unenriched_item_ids()
     topics = graph.get_item_topics(item_id)
     assert len(topics) > 0
 
