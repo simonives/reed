@@ -244,3 +244,47 @@ class TestItemTools:
         async with Client(server) as client:
             with pytest.raises(ToolError):
                 await client.call_tool("annotate_item", {"item_id": "nonexistent", "content": None})
+
+
+class TestMarkReadArgumentRules:
+    """#343: item_ids must never widen into a whole-feed mark-read."""
+
+    async def test_item_ids_with_feed_id_is_rejected_and_marks_nothing(self, mcp_server):
+        server, graph, poller = mcp_server
+        feed = graph.create_feed(
+            url="https://f.example.com/rss", title="F", description="", site_url=""
+        )
+        ids = [
+            create_test_item(
+                graph,
+                feed_url="https://f.example.com/rss",
+                guid=f"g{i}",
+                url=f"https://f.example.com/{i}",
+                title=f"T{i}",
+            )
+            for i in range(2)
+        ]
+        async with Client(server) as client:
+            with pytest.raises(ToolError, match="cannot be combined"):
+                await client.call_tool("mark_read", {"item_ids": [ids[0]], "feed_id": feed["id"]})
+        unread, total = graph.list_items(unread_only=True, limit=10)
+        assert total == 2
+
+    async def test_item_ids_alone_marks_only_those(self, mcp_server):
+        server, graph, poller = mcp_server
+        graph.create_feed(url="https://f.example.com/rss", title="F", description="", site_url="")
+        ids = [
+            create_test_item(
+                graph,
+                feed_url="https://f.example.com/rss",
+                guid=f"g{i}",
+                url=f"https://f.example.com/{i}",
+                title=f"T{i}",
+            )
+            for i in range(2)
+        ]
+        async with Client(server) as client:
+            result = await client.call_tool("mark_read", {"item_ids": [ids[0]]})
+        assert result.data["marked"] == 1
+        unread, total = graph.list_items(unread_only=True, limit=10)
+        assert total == 1 and unread[0]["id"] == ids[1]

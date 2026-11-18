@@ -31,6 +31,10 @@ class ConfigUpdate(BaseModel):
     reading_width: int | None = Field(default=None, ge=480, le=1200)
     line_height: float | None = Field(default=None, ge=1.2, le=2.2)
     font_family_reading: str | None = None
+    similarity_window_days: int | None = Field(default=None, ge=1, le=3650)
+    similarity_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    similarity_max_topic_share: float | None = Field(default=None, gt=0.0, le=1.0)
+    similarity_topic_share_floor: int | None = Field(default=None, ge=1)
 
     @field_validator("font_family_reading")
     @classmethod

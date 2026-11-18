@@ -116,7 +116,8 @@ def create_mcp_server(graph: GraphService, poller: FeedPoller) -> FastMCP:
             raise ToolError(f"Feed not found: {feed_id}")
         await poller.refresh_feed(feed)
         refreshed = await asyncio.to_thread(graph.get_feed, feed_id)
-        assert refreshed is not None
+        if refreshed is None:
+            raise ToolError(f"Feed not found: {feed_id}")
         return refreshed
 
     @mcp.tool
@@ -179,8 +180,10 @@ def create_mcp_server(graph: GraphService, poller: FeedPoller) -> FastMCP:
         feed_id: str | None = None,
         before: str | None = None,
     ) -> dict[str, Any]:
-        """Mark one or more items as read. item_ids, feed_id, and before are
-        all optional and combinable. Omitting all three marks everything as read."""
+        """Mark items as read. Give item_ids to mark specific items, or feed_id
+        and/or before to mark a feed or date range (feed_id and before combine).
+        item_ids cannot be combined with feed_id or before. Omitting all three
+        marks everything as read."""
         from datetime import datetime
 
         if feed_id is not None and not graph.feed_exists_by_id(feed_id):
@@ -190,12 +193,11 @@ def create_mcp_server(graph: GraphService, poller: FeedPoller) -> FastMCP:
         except ValueError as exc:
             raise ToolError(f"Invalid before: {before!r}") from exc
 
-        marked = 0
-        if item_ids:
-            marked += graph.mark_read_by_ids(item_ids)
-        if item_ids is None or feed_id is not None or before is not None:
-            marked += graph.mark_read_bulk(feed_id=feed_id, before=before_dt)
-        return {"marked": marked}
+        if item_ids is not None and (feed_id is not None or before is not None):
+            raise ToolError("item_ids cannot be combined with feed_id or before")
+        if item_ids is not None:
+            return {"marked": graph.mark_read_by_ids(item_ids) if item_ids else 0}
+        return {"marked": graph.mark_read_bulk(feed_id=feed_id, before=before_dt)}
 
     @mcp.tool
     def mark_starred(item_id: str, starred: bool) -> dict[str, Any]:
