@@ -83,19 +83,28 @@ def _env_proxy_mounts() -> dict[str, httpx.AsyncBaseTransport | None]:
     return mounts
 
 
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _is_public_ip(addr: str) -> bool:
+    """True only for globally routable addresses.
+
+    IPv6 forms that embed an IPv4 address (mapped, 6to4, Teredo, NAT64) are
+    judged by the embedded address, so they cannot smuggle a private target.
+    """
     try:
         ip = ipaddress.ip_address(addr)
     except ValueError:
         return False
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+    if isinstance(ip, ipaddress.IPv6Address):
+        embedded = ip.ipv4_mapped or ip.sixtofour
+        if ip.teredo:
+            embedded = ip.teredo[1]
+        if ip in _NAT64:
+            embedded = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        if embedded is not None:
+            return _is_public_ip(str(embedded))
+    return ip.is_global and not ip.is_multicast
 
 
 async def _resolve_safe_ips(host: str) -> list[str]:
