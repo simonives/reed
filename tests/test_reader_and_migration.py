@@ -24,6 +24,7 @@ from reed.http import (
     safe_get,
     safe_post,
 )
+from tests.conftest import fake_stream
 
 
 def _first_item_id(authed):
@@ -99,7 +100,7 @@ class TestSSRFGuard:
             request=httpx.Request("GET", "https://example.com/"),
         )
         client = AsyncMock()
-        client.get = AsyncMock(return_value=redirect)
+        client.stream = fake_stream(redirect)
 
         async def resolve(host):
             if host == "example.com":
@@ -117,7 +118,7 @@ class TestSSRFGuard:
 
         ok = httpx.Response(200, request=httpx.Request("GET", "https://example.com/"))
         client = AsyncMock()
-        client.get = AsyncMock(return_value=ok)
+        client.stream = fake_stream(ok)
         with patch("reed.http._resolve_safe_ips", AsyncMock(return_value=["93.184.216.34"])):
             response = await safe_get(client, "https://example.com/")
         assert response.status_code == 200

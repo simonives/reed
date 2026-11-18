@@ -320,6 +320,11 @@ def create_mcp_server(graph: GraphService, poller: FeedPoller) -> FastMCP:
         """Full-text search across items and notes."""
         _bounded("limit", limit)
         items, total = graph.search_items(q=query, unread_only=bool(unread), limit=limit)
+        # Matching uses the full text, but returning it would put the whole
+        # body of every hit (up to 200) into the response; excerpts remain.
+        for item in items:
+            for heavy in ("content", "note_body", "reader_content"):
+                item.pop(heavy, None)
         return {"items": items, "total": total}
 
     @mcp.tool

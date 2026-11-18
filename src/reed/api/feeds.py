@@ -12,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 
-from ..config import effective_config
+from ..config import effective_config, get_settings
 from ..discovery import discover_feeds
 from ..graph import GraphService
 from ..http import UnsafeURLError, http_client, safe_get
@@ -112,7 +112,7 @@ async def discover_and_create_feed(
 
     try:
         async with http_client() as client:
-            response = await safe_get(client, url)
+            response = await safe_get(client, url, max_bytes=get_settings().max_feed_bytes)
         response.raise_for_status()
     except (UnsafeURLError, httpx.HTTPError) as exc:
         prefix = "Refusing to fetch" if isinstance(exc, UnsafeURLError) else "Could not fetch"

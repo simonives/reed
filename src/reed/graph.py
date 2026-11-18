@@ -126,6 +126,7 @@ _CSR_CORRUPTION_MARKER = "csr_node_group.cpp"
 # per distinct query text and reused. The cache is a bounded LRU so queries whose text
 # varies per call cannot grow it without limit.
 _PREPARED_CACHE_SIZE = 256
+_MAX_SUMMARY_CHARS = 1000
 
 # Statements that change the catalog invalidate every prepared statement.
 _SCHEMA_CHANGE = re.compile(
@@ -698,6 +699,13 @@ class GraphService:
         if not self.item_exists(guid):
             if not summary and content:
                 clean = _strip_html(content)
+                summary = clean[:300].rsplit(" ", 1)[0] + "…" if len(clean) > 300 else clean
+            elif len(summary) > _MAX_SUMMARY_CHARS:
+                # Some feeds put the whole article in <description>. Keep it as the
+                # body and store a snippet, so list queries do not load it per row.
+                if not content:
+                    content = summary
+                clean = _strip_html(summary)
                 summary = clean[:300].rsplit(" ", 1)[0] + "…" if len(clean) > 300 else clean
             item_id = str(uuid.uuid4())
             self._execute(

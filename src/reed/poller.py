@@ -210,7 +210,9 @@ class FeedPoller:
         try:
             # safe_get blocks SSRF: a feed (or a redirect from one) must not
             # reach a private or link-local address such as cloud metadata.
-            response = await safe_get(http, url, headers=headers)
+            response = await safe_get(
+                http, url, headers=headers, max_bytes=get_settings().max_feed_bytes
+            )
 
             if response.status_code == 304:
                 await asyncio.to_thread(

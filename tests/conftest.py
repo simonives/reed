@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -36,12 +37,38 @@ SAMPLE_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 
 def mock_http_response(content: bytes = SAMPLE_RSS, status_code: int = 200):
-    resp = MagicMock()
-    resp.status_code = status_code
-    resp.content = content
-    resp.is_redirect = False  # safe_get returns non-redirects directly
-    resp.raise_for_status = MagicMock()
-    return resp
+    """A real httpx.Response, so streaming, headers and raise_for_status all behave."""
+    return httpx.Response(
+        status_code,
+        content=content,
+        request=httpx.Request("GET", "https://example.com/feed.rss"),
+    )
+
+
+class _StreamCM:
+    """Async context manager standing in for AsyncClient.stream(...)."""
+
+    def __init__(self, outcome):
+        self._outcome = outcome
+
+    async def __aenter__(self):
+        if isinstance(self._outcome, BaseException):
+            raise self._outcome
+        return self._outcome
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def fake_stream(source):
+    """Build a stub for AsyncClient.stream from a response, an exception, or a
+    callable taking (url, **kwargs) and returning either."""
+
+    def stream(method, url, **kwargs):
+        outcome = source(url, **kwargs) if callable(source) else source
+        return _StreamCM(outcome)
+
+    return MagicMock(side_effect=stream)
 
 
 @contextmanager
@@ -54,10 +81,9 @@ def patched_feed_fetch(response=None, side_effect=None, module="reed.api.feeds")
     exercised separately in TestSSRFGuard.
     """
     mock_client = AsyncMock()
-    if side_effect is not None:
-        mock_client.get = AsyncMock(side_effect=side_effect)
-    else:
-        mock_client.get = AsyncMock(return_value=response or mock_http_response())
+    mock_client.stream = fake_stream(
+        side_effect if side_effect is not None else (response or mock_http_response())
+    )
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=mock_client)
     cm.__aexit__ = AsyncMock(return_value=False)
