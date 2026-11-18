@@ -1778,16 +1778,6 @@ class GraphService:
             {"id": item_id, "ts": now, "kws": payload},
         )
 
-    def get_unenriched_items(self) -> list[dict[str, Any]]:
-        """Return all items not yet enriched (enriched_at IS NULL)."""
-        return _rows(
-            self._execute(
-                "MATCH (i:Item) WHERE i.enriched_at IS NULL "
-                "RETURN i.id AS id, i.title AS title, "
-                "i.summary AS summary, i.content AS content"
-            )
-        )
-
     def get_unenriched_item_ids(self) -> list[str]:
         """Ids of items not yet enriched. Ids only, so a large backlog stays small in memory."""
         rows = _rows(self._execute("MATCH (i:Item) WHERE i.enriched_at IS NULL RETURN i.id AS id"))

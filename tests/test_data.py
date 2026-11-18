@@ -238,9 +238,9 @@ class TestExportRestoreTopics:
     def test_export_includes_topics_and_about_edges(self, graph_with_data):
         g = graph_with_data
         # Enrich an item so there are topics to export
-        items = g.get_unenriched_items()
-        assert items, "fixture must have at least one item"
-        item = items[0]
+        ids = g.get_unenriched_item_ids()
+        assert ids, "fixture must have at least one item"
+        item = {"id": ids[0]}
         g.enrich_item(item["id"], [("rss feeds", 0.1), ("open source", 0.2)])
         backup = g.export_data()
         assert "topics" in backup
@@ -259,8 +259,7 @@ class TestExportRestoreTopics:
 
     def test_restore_round_trips_topics(self, graph_with_data, tmp_path):
         g = graph_with_data
-        items = g.get_unenriched_items()
-        item = items[0]
+        item = {"id": g.get_unenriched_item_ids()[0]}
         g.enrich_item(item["id"], [("machine learning", 0.15)])
         backup = g.export_data()
         # Restore into a fresh graph
@@ -273,8 +272,7 @@ class TestExportRestoreTopics:
     def test_restore_clears_ghost_topics(self, graph_with_data, tmp_path):
         g = graph_with_data
         # Enrich to create topics
-        items = g.get_unenriched_items()
-        item = items[0]
+        item = {"id": g.get_unenriched_item_ids()[0]}
         g.enrich_item(item["id"], [("ghost topic", 0.5)])
         backup_before = g.export_data()
         # Take a backup WITHOUT topics (simulate old backup)
@@ -288,8 +286,7 @@ class TestExportRestoreTopics:
 
     def test_restore_recomputes_item_count(self, graph_with_data, tmp_path):
         g = graph_with_data
-        items = g.get_unenriched_items()
-        item = items[0]
+        item = {"id": g.get_unenriched_item_ids()[0]}
         g.enrich_item(item["id"], [("test topic", 0.3)])
         backup = g.export_data()
         g.restore_data(backup)
