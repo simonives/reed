@@ -126,16 +126,23 @@ async def discover_and_create_feed(
         raise FeedInvalidError("URL must point to a valid RSS or Atom feed")
     feed_meta = parsed.feed
 
-    return await asyncio.to_thread(
-        graph.create_feed,
-        url=url,
-        title=feed_meta.get("title", url),
-        description=feed_meta.get("description", ""),
-        site_url=feed_meta.get("link", ""),
-        display_name=display_name,
-        poll_interval_minutes=poll_interval_minutes,
-        tags=tags or [],
-    )
+    try:
+        return await asyncio.to_thread(
+            graph.create_feed,
+            url=url,
+            title=feed_meta.get("title", url),
+            description=feed_meta.get("description", ""),
+            site_url=feed_meta.get("link", ""),
+            display_name=display_name,
+            poll_interval_minutes=poll_interval_minutes,
+            tags=tags or [],
+        )
+    except RuntimeError as exc:
+        # Two concurrent subscribes both pass feed_exists; the loser hits the
+        # primary key. Report it as a conflict, not a server error.
+        if await asyncio.to_thread(graph.feed_exists, url):
+            raise FeedAlreadySubscribedError(f"Feed already subscribed: {url}") from exc
+        raise
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -201,7 +208,8 @@ async def refresh_feed(
     feed = await asyncio.to_thread(_feed_or_404, graph, feed_id)
     await poller.refresh_feed(feed)
     refreshed = await asyncio.to_thread(graph.get_feed, feed_id)
-    assert refreshed is not None
+    if refreshed is None:  # deleted while the refresh was running
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feed not found")
     config = await asyncio.to_thread(effective_config, graph)
     return envelope(feed_response(refreshed, config))
 

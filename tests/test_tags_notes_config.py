@@ -238,3 +238,23 @@ class TestNoteEdge:
             assert graph.put_note("no-such-id", "x") is None
         finally:
             graph.close()
+
+
+class TestSimilarityConfigPatch:
+    """#344: similarity_* keys must be settable via PATCH."""
+
+    def test_patch_similarity_keys(self, authed):
+        r = authed.patch(
+            "/api/v1/config",
+            json={"similarity_window_days": 30, "similarity_score_threshold": 0.2},
+        )
+        assert r.status_code == 200
+        config = authed.get("/api/v1/config").json()["data"]
+        assert config["similarity_window_days"] == 30
+        assert config["similarity_score_threshold"] == 0.2
+
+    def test_similarity_bounds_enforced(self, authed):
+        assert authed.patch("/api/v1/config", json={"similarity_window_days": 0}).status_code in (
+            400,
+            422,
+        )

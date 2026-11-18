@@ -279,8 +279,9 @@ class FeedPoller:
             if entry.get("content"):
                 content_html = entry.content[0].get("value", "")
             published_at: datetime | None = None
-            if entry.get("published_parsed"):
-                tp = entry.published_parsed
+            # Atom feeds may carry only <updated>; use it when <published> is absent.
+            tp = entry.get("published_parsed") or entry.get("updated_parsed")
+            if tp:
                 with contextlib.suppress(ValueError, TypeError):
                     published_at = datetime(tp[0], tp[1], tp[2], tp[3], tp[4], tp[5], tzinfo=UTC)
 

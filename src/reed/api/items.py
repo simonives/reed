@@ -136,7 +136,8 @@ async def extract_item(item_id: str, graph: GraphService = Depends(get_graph)) -
         )
     await asyncio.to_thread(graph.save_reader_content, item_id, content, datetime.now(UTC))
     refreshed = await asyncio.to_thread(graph.get_item, item_id)
-    assert refreshed is not None
+    if refreshed is None:  # deleted while extraction was running
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     topics = await asyncio.to_thread(graph.get_item_topics, refreshed["id"])
     return _item_envelope(refreshed, topics)
 
