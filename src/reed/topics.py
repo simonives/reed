@@ -76,9 +76,15 @@ def make_extractor() -> yake.KeywordExtractor:
     return yake.KeywordExtractor(lan="en", n=3, dedupLim=0.9, top=10)
 
 
+# Keyword extraction cost grows with input size; the opening of an article carries
+# its topics, so very long transcripts and newsletters are truncated.
+MAX_KEYWORD_INPUT_CHARS = 15_000
+
+
 def extract_keywords(text: str, extractor: yake.KeywordExtractor) -> list[tuple[str, float]]:
     if not text.strip():
         return []
+    text = text[:MAX_KEYWORD_INPUT_CHARS]
     return [
         (kw.lower(), float(score))
         for kw, score in extractor.extract_keywords(text)
