@@ -650,6 +650,30 @@ class GraphService:
             },
         )
 
+    def update_feed_poll_metadata_batch(
+        self, updates: list[tuple[str, datetime, str | None, str | None, str | None]]
+    ) -> None:
+        """Apply several (url, last_fetched_at, etag, last_modified, error) updates
+        in one write transaction. Same semantics as update_feed_poll_metadata."""
+        if not updates:
+            return
+        rows = [
+            {"url": u, "t": t, "etag": e, "lm": lm, "error": err} for u, t, e, lm, err in updates
+        ]
+        self._execute(
+            """
+            UNWIND $rows AS r
+            MATCH (f:Feed {url: r.url})
+            SET f.last_fetched_at = r.t,
+                f.etag = r.etag,
+                f.last_modified = r.lm,
+                f.last_error = r.error,
+                f.consecutive_errors =
+                    CASE WHEN r.error IS NULL THEN 0 ELSE f.consecutive_errors + 1 END
+            """,
+            {"rows": rows},
+        )
+
     def delete_feed(self, feed_id: str) -> bool:
         if not self.feed_exists_by_id(feed_id):
             return False
@@ -1702,12 +1726,37 @@ class GraphService:
         return len(bad)
 
     def enrich_item(self, item_id: str, keywords: list[tuple[str, float]]) -> None:
-        """Link keywords to item as topics, then mark item as enriched."""
+        """Link keywords to item as topics, then mark item as enriched.
+
+        One write transaction for the whole item rather than one per keyword.
+        Idempotent: an existing ABOUT edge is left alone and its topic's
+        item_count is only incremented when the edge is new.
+        """
+        now = datetime.now(UTC)
+        unique: dict[str, float] = {}
         for name, score in keywords:
-            self.link_item_topic(item_id, name, score)
+            unique.setdefault(name, float(score))
+        if not unique:
+            self._execute(
+                "MATCH (i:Item {id: $id}) SET i.enriched_at = $ts", {"id": item_id, "ts": now}
+            )
+            return
+        payload = [
+            {"name": name, "score": score, "tid": str(uuid.uuid4())}
+            for name, score in unique.items()
+        ]
         self._execute(
-            "MATCH (i:Item {id: $id}) SET i.enriched_at = $ts",
-            {"id": item_id, "ts": datetime.now(UTC)},
+            """
+            MATCH (i:Item {id: $id})
+            SET i.enriched_at = $ts
+            WITH i
+            UNWIND $kws AS kw
+            MERGE (t:Topic {name: kw.name})
+              ON CREATE SET t.id = kw.tid, t.item_count = 0
+            MERGE (i)-[a:ABOUT]->(t)
+              ON CREATE SET a.score = kw.score, t.item_count = t.item_count + 1
+            """,
+            {"id": item_id, "ts": now, "kws": payload},
         )
 
     def get_unenriched_items(self) -> list[dict[str, Any]]:

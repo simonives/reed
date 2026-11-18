@@ -45,6 +45,10 @@ _BACKFILL_BATCH = 100
 _RECOMPUTE_BACKOFF_BASE_MINUTES = 5
 
 
+# (url, last_fetched_at, etag, last_modified, error)
+PollRecord = tuple[str, datetime, str | None, str | None, str | None]
+
+
 def _backoff_minutes(interval_min: int, consecutive_errors: int) -> int:
     """Poll interval after repeated failures (docs/architecture/feed-poller.md):
     1-2 errors normal, 3-5 double, 6-10 quadruple, more than 10 once a day."""
@@ -175,11 +179,21 @@ class FeedPoller:
         logger.debug("Polling %d due feed(s)", len(due))
         http = self._http
 
+        # One metadata write for the whole cycle instead of one per feed. A feed
+        # that records twice (success, then a later failure) keeps its last entry.
+        pending: dict[str, PollRecord] = {}
+
         async def poll_bounded(feed: dict[str, Any]) -> None:
             async with self._poll_slots:
-                await self._poll_feed(feed, now, http, config)
+                await self._poll_feed(feed, now, http, config, pending)
 
-        await asyncio.gather(*(poll_bounded(feed) for feed in due), return_exceptions=True)
+        try:
+            await asyncio.gather(*(poll_bounded(feed) for feed in due), return_exceptions=True)
+        finally:
+            if pending:
+                await asyncio.to_thread(
+                    self._graph.update_feed_poll_metadata_batch, list(pending.values())
+                )
 
     def _is_due(self, feed: dict[str, Any], now: datetime, config: dict[str, Any]) -> bool:
         last_fetched = feed.get("last_fetched_at")
@@ -199,8 +213,20 @@ class FeedPoller:
         now: datetime,
         http: httpx.AsyncClient,
         config: dict[str, Any],
+        pending: dict[str, PollRecord] | None = None,
     ) -> None:
+        """Poll one feed. With `pending`, poll metadata is queued there for the
+        caller to flush in one write; without it, it is written immediately."""
         url = str(feed["url"])
+
+        async def record(etag: str | None, last_modified: str | None, error: str | None) -> None:
+            if pending is not None:
+                pending[url] = (url, now, etag, last_modified, error)
+            else:
+                await asyncio.to_thread(
+                    self._graph.update_feed_poll_metadata, url, now, etag, last_modified, error
+                )
+
         headers: dict[str, str] = {}
         if feed.get("etag"):
             headers["If-None-Match"] = str(feed["etag"])
@@ -215,10 +241,7 @@ class FeedPoller:
             )
 
             if response.status_code == 304:
-                await asyncio.to_thread(
-                    self._graph.update_feed_poll_metadata,
-                    url,
-                    now,
+                await record(
                     str(feed["etag"]) if feed.get("etag") else None,
                     str(feed["last_modified"]) if feed.get("last_modified") else None,
                     None,
@@ -232,9 +255,7 @@ class FeedPoller:
             last_modified = response.headers.get("Last-Modified")
 
             new_items = await asyncio.to_thread(self._ingest_entries, url, response.content, now)
-            await asyncio.to_thread(
-                self._graph.update_feed_poll_metadata, url, now, etag, last_modified, None
-            )
+            await record(etag, last_modified, None)
             logger.info("Polled %s: %d new item(s)", url, len(new_items))
 
             if new_items and effective_feed_settings(feed, config)["reader_mode_enabled"]:
@@ -247,10 +268,7 @@ class FeedPoller:
             if str(exc) and not isinstance(exc, httpx.HTTPStatusError):
                 error = f"{type(exc).__name__}: {error}"[:500]
             logger.warning("Poll failed for %s: %s", url, error)
-            await asyncio.to_thread(
-                self._graph.update_feed_poll_metadata,
-                url,
-                now,
+            await record(
                 str(feed["etag"]) if feed.get("etag") else None,
                 str(feed["last_modified"]) if feed.get("last_modified") else None,
                 error,
