@@ -51,7 +51,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _graph, _poller, _poller_task
     settings = get_settings()
 
-    _graph = GraphService(settings.data_path, buffer_pool_mb=settings.kuzu_buffer_pool_mb)
+    _graph = GraphService(
+        settings.data_path,
+        buffer_pool_mb=settings.kuzu_buffer_pool_mb,
+        max_threads=settings.kuzu_max_threads,
+    )
     app.state.graph = _graph
 
     _poller = FeedPoller(_graph)
@@ -86,9 +90,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             _poller_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await _poller_task
-        if _graph:
-            await _shutdown_graph(_graph)
-        logger.info("Reed stopped")
+        if _poller:
+            # Cancelling the task does not stop worker threads already inside a
+            # graph call; wait for them before the database is closed.
+            await _poller.wait_idle()
+
+    # The MCP lifespan has now exited, so no request can reach the graph.
+    if _graph:
+        await _shutdown_graph(_graph)
+    logger.info("Reed stopped")
 
 
 def create_app() -> FastAPI:

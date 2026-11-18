@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Kuzu page-cache cap. Kuzu's own default is ~80% of system RAM, which
     # starves small hosts; 0 restores that default.
     kuzu_buffer_pool_mb: int = 512
+    # Worker threads Kuzu may use per query. Its default is one per CPU, and each
+    # thread holds its own hash tables during joins and scans.
+    kuzu_max_threads: int = 2
     # Largest response body fetched from a feed-author-controlled URL.
     max_feed_bytes: int = 10 * 1024 * 1024
     max_article_bytes: int = 5 * 1024 * 1024
