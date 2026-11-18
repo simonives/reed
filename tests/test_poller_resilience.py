@@ -123,7 +123,7 @@ class TestParallelPolling:
         peak = 0
         finished = 0
 
-        async def slow_poll(feed, now, http, config):
+        async def slow_poll(feed, now, http, config, pending=None):
             nonlocal in_flight, peak, finished
             in_flight += 1
             peak = max(peak, in_flight)
