@@ -75,13 +75,20 @@ class FeedPoller:
         self._next_recompute_attempt: datetime | None = None
         self._poll_slots = asyncio.Semaphore(_POLL_CONCURRENCY)
         self._extract_slots = asyncio.Semaphore(_EXTRACTION_CONCURRENCY)
+        self._threads_in_flight = 0
 
     async def start(self) -> None:
         self._running = True
         self._http = http_client()
         logger.info("Feed poller started")
         try:
-            purged = await asyncio.to_thread(self._graph.purge_invalid_topics)
+            # A restart is not a first run: take the last recompute time from the
+            # stored edges so every restart does not rebuild them.
+            self._last_recompute = await self._in_thread(self._graph.last_derived_edge_time)
+        except Exception:
+            logger.warning("Could not read last recompute time", exc_info=True)
+        try:
+            purged = await self._in_thread(self._graph.purge_invalid_topics)
             if purged:
                 logger.info("Purged %d invalid topic(s)", purged)
             await self._backfill_topics()
@@ -105,12 +112,32 @@ class FeedPoller:
                 await asyncio.sleep(60)
         finally:
             await self._http.aclose()
+            self._http = None
 
     async def stop(self) -> None:
         self._running = False
 
+    async def wait_idle(self, timeout: float = 20.0) -> None:
+        """Wait for graph work started by the poller to finish (shutdown helper)."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while self._threads_in_flight > 0:
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.warning(
+                    "Shutting down with %d poller task(s) still running", self._threads_in_flight
+                )
+                return
+            await asyncio.sleep(0.1)
+
+    async def _in_thread(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """asyncio.to_thread that is counted, so shutdown can wait for it."""
+        self._threads_in_flight += 1
+        try:
+            return await asyncio.to_thread(fn, *args, **kwargs)
+        finally:
+            self._threads_in_flight -= 1
+
     async def _maybe_recompute_edges(self) -> None:
-        config = await asyncio.to_thread(effective_config, self._graph)
+        config = await self._in_thread(effective_config, self._graph)
         interval = timedelta(minutes=get_settings().derived_edge_interval)
         now = datetime.now(UTC)
         if self._last_recompute is not None and now < self._last_recompute + interval:
@@ -128,8 +155,8 @@ class FeedPoller:
         self._recompute_in_progress = True
         try:
             if config is None:
-                config = await asyncio.to_thread(effective_config, self._graph)
-            await asyncio.to_thread(
+                config = await self._in_thread(effective_config, self._graph)
+            await self._in_thread(
                 self._graph.recompute_derived_edges,
                 window_days=int(config["similarity_window_days"]),
                 score_threshold=float(config["similarity_score_threshold"]),
@@ -155,7 +182,7 @@ class FeedPoller:
 
     async def refresh_feed(self, feed: dict[str, Any]) -> None:
         """Poll a single feed immediately (POST /feeds/{id}/refresh)."""
-        config = await asyncio.to_thread(effective_config, self._graph)
+        config = await self._in_thread(effective_config, self._graph)
         now = datetime.now(UTC)
         if self._http is not None:
             await self._poll_feed(feed, now, self._http, config)
@@ -171,8 +198,8 @@ class FeedPoller:
         # graph.* call made directly on the event-loop thread (rather than
         # via asyncio.to_thread) here would block the whole ASGI server for
         # the duration of an in-flight recompute, not just this poll cycle.
-        config = await asyncio.to_thread(effective_config, self._graph)
-        feeds = await asyncio.to_thread(self._graph.list_feeds_for_polling)
+        config = await self._in_thread(effective_config, self._graph)
+        feeds = await self._in_thread(self._graph.list_feeds_for_polling)
         due = [f for f in feeds if self._is_due(f, now, config)]
         if not due:
             return
@@ -191,7 +218,7 @@ class FeedPoller:
             await asyncio.gather(*(poll_bounded(feed) for feed in due), return_exceptions=True)
         finally:
             if pending:
-                await asyncio.to_thread(
+                await self._in_thread(
                     self._graph.update_feed_poll_metadata_batch, list(pending.values())
                 )
 
@@ -223,7 +250,7 @@ class FeedPoller:
             if pending is not None:
                 pending[url] = (url, now, etag, last_modified, error)
             else:
-                await asyncio.to_thread(
+                await self._in_thread(
                     self._graph.update_feed_poll_metadata, url, now, etag, last_modified, error
                 )
 
@@ -254,7 +281,7 @@ class FeedPoller:
             etag = response.headers.get("ETag")
             last_modified = response.headers.get("Last-Modified")
 
-            new_items = await asyncio.to_thread(self._ingest_entries, url, response.content, now)
+            new_items = await self._in_thread(self._ingest_entries, url, response.content, now)
             await record(etag, last_modified, None)
             logger.info("Polled %s: %d new item(s)", url, len(new_items))
 
@@ -281,7 +308,7 @@ class FeedPoller:
             async with self._extract_slots:
                 content = await extract_article(item_url, http)
             if content:
-                await asyncio.to_thread(
+                await self._in_thread(
                     self._graph.save_reader_content, item_id, content, datetime.now(UTC)
                 )
 
@@ -347,17 +374,17 @@ class FeedPoller:
     async def _enrich_new_items(self, new_items: list[tuple[str, str, str]]) -> None:
         for item_id, _, text in new_items:
             try:
-                await asyncio.to_thread(self._enrich_item, item_id, text)
+                await self._in_thread(self._enrich_item, item_id, text)
             except Exception:
                 logger.warning("Topic enrichment failed for item %s", item_id)
 
     async def _backfill_topics(self) -> None:
-        ids = await asyncio.to_thread(self._graph.get_unenriched_item_ids)
+        ids = await self._in_thread(self._graph.get_unenriched_item_ids)
         if not ids:
             return
         logger.info("Backfilling topics for %d item(s)", len(ids))
         for start in range(0, len(ids), _BACKFILL_BATCH):
-            batch = await asyncio.to_thread(
+            batch = await self._in_thread(
                 self._graph.get_items_for_enrichment, ids[start : start + _BACKFILL_BATCH]
             )
             for item in batch:
@@ -367,6 +394,6 @@ class FeedPoller:
                     item.get("content") or "",
                 )
                 try:
-                    await asyncio.to_thread(self._enrich_item, item["id"], text)
+                    await self._in_thread(self._enrich_item, item["id"], text)
                 except Exception:
                     logger.warning("Topic backfill failed for item %s", item["id"])

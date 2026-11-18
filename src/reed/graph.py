@@ -144,14 +144,22 @@ class GraphService:
     The REST API and MCP server import this; neither touches Kuzu directly.
     """
 
-    def __init__(self, db_path: str, buffer_pool_mb: int | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str,
+        buffer_pool_mb: int | None = None,
+        max_threads: int | None = None,
+    ) -> None:
         pathlib.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        options: dict[str, Any] = {}
         if buffer_pool_mb:
-            self._db = kuzu.Database(db_path, buffer_pool_size=buffer_pool_mb * 1024 * 1024)
-        else:
-            self._db = kuzu.Database(db_path)
+            options["buffer_pool_size"] = buffer_pool_mb * 1024 * 1024
+        if max_threads:
+            options["max_num_threads"] = max_threads
+        self._db = kuzu.Database(db_path, **options)
         self._conn = kuzu.Connection(self._db)
         self._conn_lock = threading.RLock()
+        self._closed = False
         self._prepared: collections.OrderedDict[str, Any] = collections.OrderedDict()
         self._ensure_schema()
 
@@ -159,6 +167,8 @@ class GraphService:
         self, query: str, params: dict[str, Any] | None = None
     ) -> kuzu.QueryResult | list[kuzu.QueryResult]:
         with self._conn_lock:
+            if self._closed:
+                raise RuntimeError("GraphService is closed")
             if _SCHEMA_CHANGE.match(query):
                 self._prepared.clear()
             if not params:
@@ -649,6 +659,15 @@ class GraphService:
                 "error": error,
             },
         )
+
+    def last_derived_edge_time(self) -> datetime | None:
+        """Newest computed_at over SIMILAR_TO, or None when none exist. Lets the
+        poller tell a restart from a first run instead of recomputing every start."""
+        rows = _rows(self._execute("MATCH ()-[r:SIMILAR_TO]->() RETURN max(r.computed_at) AS t"))
+        t = rows[0]["t"] if rows else None
+        if t is None:
+            return None
+        return t if t.tzinfo else t.replace(tzinfo=UTC)
 
     def update_feed_poll_metadata_batch(
         self, updates: list[tuple[str, datetime, str | None, str | None, str | None]]
@@ -2104,8 +2123,18 @@ class GraphService:
         window_start = now - timedelta(days=window_days)
 
         with self._conn_lock:
-            total_items = int(_rows(self._execute("MATCH (i:Item) RETURN count(i) AS n"))[0]["n"])
-            max_topic_items = max(topic_share_floor, int(total_items * max_topic_share))
+            # The dominance cap is a share of the items the similarity join can
+            # actually see, so count only those inside the window (#246). Counting
+            # all history lets the cap grow without bound as the archive ages.
+            window_items = int(
+                _rows(
+                    self._execute(
+                        "MATCH (i:Item) WHERE i.published_at >= $window_start RETURN count(i) AS n",
+                        {"window_start": window_start},
+                    )
+                )[0]["n"]
+            )
+            max_topic_items = max(topic_share_floor, int(window_items * max_topic_share))
             self._execute(
                 """
                 MATCH (t1:Topic)<-[:ABOUT]-(i:Item)-[:ABOUT]->(t2:Topic)
@@ -2376,6 +2405,15 @@ class GraphService:
         # underlying Kuzu connection out from under it, segfaulting the
         # process rather than raising a catchable Python exception.
         with self._conn_lock:
+            if self._closed:
+                return
             self._prepared.clear()
+            # Fold the write-ahead log into the main file so the next start does not
+            # have to replay it (replay needs a larger buffer pool than normal use).
+            try:
+                self._conn.execute("CHECKPOINT")
+            except Exception:
+                logger.warning("CHECKPOINT on close failed", exc_info=True)
+            self._closed = True
             self._conn.close()
             self._db.close()
