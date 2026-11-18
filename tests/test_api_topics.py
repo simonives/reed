@@ -36,7 +36,7 @@ def enriched(authed, reed_client):
     poller._ingest_entries("https://tech.example.com/feed.rss", TECH_RSS, datetime.now(UTC))
 
     extractor = make_extractor()
-    for item in graph.get_unenriched_items():
+    for item in graph.get_items_for_enrichment(graph.get_unenriched_item_ids()):
         text = item_text(
             item.get("title") or "",
             item.get("summary") or "",
