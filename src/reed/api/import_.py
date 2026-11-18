@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, Up
 from pydantic import BaseModel
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from ..config import get_settings
 from ..graph import GraphService
 from ..http import UnsafeURLError, http_client, safe_get
 from ..opml import parse_opml
@@ -110,44 +111,44 @@ async def import_opml(
     added = 0
     skipped = 0
     failed: list[dict[str, str]] = []
-    for item in body.feeds:
-        if await asyncio.to_thread(graph.feed_exists, item.url):
-            skipped += 1
-            continue
+    async with http_client() as client:
+        for item in body.feeds:
+            if await asyncio.to_thread(graph.feed_exists, item.url):
+                skipped += 1
+                continue
 
-        try:
-            async with http_client() as client:
-                response = await safe_get(client, item.url)
-            response.raise_for_status()
-        except (UnsafeURLError, httpx.HTTPError) as exc:
-            failed.append({"url": item.url, "reason": _fetch_fail_reason(exc)})
-            continue
+            try:
+                response = await safe_get(client, item.url, max_bytes=get_settings().max_feed_bytes)
+                response.raise_for_status()
+            except (UnsafeURLError, httpx.HTTPError) as exc:
+                failed.append({"url": item.url, "reason": _fetch_fail_reason(exc)})
+                continue
 
-        try:
-            parsed = await asyncio.to_thread(feedparser.parse, response.content)
-        except Exception as exc:
-            failed.append({"url": item.url, "reason": f"Feed parse error: {exc}"})
-            continue
-        if not parsed.get("version"):
-            failed.append(
-                {"url": item.url, "reason": "URL does not point to a valid RSS or Atom feed"}
-            )
-            continue
-        feed_meta = parsed.feed
+            try:
+                parsed = await asyncio.to_thread(feedparser.parse, response.content)
+            except Exception as exc:
+                failed.append({"url": item.url, "reason": f"Feed parse error: {exc}"})
+                continue
+            if not parsed.get("version"):
+                failed.append(
+                    {"url": item.url, "reason": "URL does not point to a valid RSS or Atom feed"}
+                )
+                continue
+            feed_meta = parsed.feed
 
-        try:
-            await asyncio.to_thread(
-                graph.create_feed,
-                url=item.url,
-                title=item.title or feed_meta.get("title") or item.url,
-                description=feed_meta.get("description", ""),
-                site_url=feed_meta.get("link", ""),
-                tags=item.tags,
-            )
-            added += 1
-        except Exception:
-            logger.exception("create_feed failed during OPML import for %s", item.url)
-            failed.append({"url": item.url, "reason": "Could not create feed"})
+            try:
+                await asyncio.to_thread(
+                    graph.create_feed,
+                    url=item.url,
+                    title=item.title or feed_meta.get("title") or item.url,
+                    description=feed_meta.get("description", ""),
+                    site_url=feed_meta.get("link", ""),
+                    tags=item.tags,
+                )
+                added += 1
+            except Exception:
+                logger.exception("create_feed failed during OPML import for %s", item.url)
+                failed.append({"url": item.url, "reason": "Could not create feed"})
     return envelope({"added": added, "skipped": skipped, "failed": failed})
 
 

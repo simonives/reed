@@ -203,15 +203,12 @@ class TestDiscover:
     </head><body></body></html>"""
 
     def test_discovers_feeds_from_html(self, authed):
-        from unittest.mock import MagicMock
-
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.text = self.HTML.decode()
-        resp.url = "https://example.com/"
-        resp.headers = {"Content-Type": "text/html"}
-        resp.is_redirect = False
-        resp.raise_for_status = MagicMock()
+        resp = httpx.Response(
+            200,
+            content=self.HTML,
+            headers={"Content-Type": "text/html"},
+            request=httpx.Request("GET", "https://example.com/"),
+        )
 
         with patched_feed_fetch(response=resp):
             r = authed.post("/api/v1/feeds/discover", json={"url": "https://example.com"})
@@ -224,15 +221,12 @@ class TestDiscover:
         }
 
     def test_direct_feed_url_returns_itself(self, authed):
-        from unittest.mock import MagicMock
-
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.text = '<?xml version="1.0"?><rss version="2.0"></rss>'
-        resp.url = "https://example.com/feed.xml"
-        resp.headers = {"Content-Type": "application/rss+xml"}
-        resp.is_redirect = False
-        resp.raise_for_status = MagicMock()
+        resp = httpx.Response(
+            200,
+            content=b'<?xml version="1.0"?><rss version="2.0"></rss>',
+            headers={"Content-Type": "application/rss+xml"},
+            request=httpx.Request("GET", "https://example.com/feed.xml"),
+        )
 
         with patched_feed_fetch(response=resp):
             r = authed.post("/api/v1/feeds/discover", json={"url": "https://example.com/feed.xml"})

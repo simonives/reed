@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import ipaddress
 import logging
 import socket
@@ -29,6 +30,26 @@ SAFE_URL_SCHEMES = frozenset({"http", "https"})
 
 class UnsafeURLError(Exception):
     """Raised when a URL resolves to a disallowed scheme or address range."""
+
+
+class ResponseRejectedError(UnsafeURLError):
+    """Raised when a response is too large or of a type the caller refuses.
+
+    Subclasses UnsafeURLError so every existing call site that already turns an
+    unsafe fetch into a clean 422 or a logged skip handles it too.
+    """
+
+
+# Default ceiling for a response body from an untrusted URL. Callers pass a
+# tighter or looser value from Settings.
+DEFAULT_MAX_BYTES = 10 * 1024 * 1024
+
+
+@functools.lru_cache(maxsize=1)
+def _shared_ssl_context():
+    """One SSL context for every client. Building one re-parses the CA bundle
+    into native memory, so doing it per request and per OPML entry adds up."""
+    return httpx.create_ssl_context()
 
 
 def safe_url(url: str) -> str:
@@ -218,7 +239,7 @@ class _PinnedTransport(httpx.AsyncHTTPTransport):
 
     def __init__(self) -> None:
         self._pool = httpcore.AsyncConnectionPool(
-            ssl_context=httpx.create_ssl_context(),
+            ssl_context=_shared_ssl_context(),
             max_connections=100,
             max_keepalive_connections=20,
             keepalive_expiry=5.0,
@@ -234,23 +255,68 @@ async def safe_get(
     url: str,
     *,
     headers: dict[str, str] | None = None,
+    max_bytes: int | None = DEFAULT_MAX_BYTES,
+    allowed_content_types: tuple[str, ...] | None = None,
 ) -> httpx.Response:
     """GET a URL from an untrusted source, blocking SSRF to internal hosts.
 
     Redirects are followed manually so each hop's resolved address is
     validated before the request is made. The client must not follow
     redirects itself; this passes follow_redirects=False per request.
+
+    The body is streamed and abandoned with ResponseRejectedError once it
+    exceeds max_bytes (None disables the cap), or immediately when the
+    Content-Type is not in allowed_content_types (prefix match, None allows
+    any). The returned Response holds the full, decoded body.
     """
     current = httpx.URL(url)
     for _ in range(_MAX_REDIRECTS):
         await _require_safe_url(current)
-        response = await client.get(current, headers=headers, follow_redirects=False)
-        location = response.headers.get("Location")
-        if not response.is_redirect or not location:
-            return response
-        # Resolve relative redirects against the current URL, then re-validate
-        current = current.join(location)
+        async with client.stream(
+            "GET", current, headers=headers, follow_redirects=False
+        ) as response:
+            location = response.headers.get("Location")
+            if response.is_redirect and location:
+                # Resolve relative redirects against the current URL, then re-validate
+                current = current.join(location)
+                continue
+            return await _read_capped(response, max_bytes, allowed_content_types)
     raise UnsafeURLError("Too many redirects")
+
+
+async def _read_capped(
+    response: httpx.Response,
+    max_bytes: int | None,
+    allowed_content_types: tuple[str, ...] | None,
+) -> httpx.Response:
+    content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    if (
+        allowed_content_types is not None
+        and response.is_success
+        and not content_type.startswith(tuple(t.lower() for t in allowed_content_types))
+    ):
+        raise ResponseRejectedError(f"Unsupported content type: {content_type or 'unknown'}")
+    declared = response.headers.get("Content-Length", "")
+    if max_bytes is not None and declared.isdigit() and int(declared) > max_bytes:
+        raise ResponseRejectedError(f"Response too large ({declared} bytes, limit {max_bytes})")
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        body.extend(chunk)
+        if max_bytes is not None and len(body) > max_bytes:
+            raise ResponseRejectedError(f"Response exceeded {max_bytes} bytes")
+    # aiter_bytes yields decoded bytes, so drop the encoding and length headers
+    # that no longer describe the body we hand back.
+    kept = [
+        (k, v)
+        for k, v in response.headers.multi_items()
+        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")
+    ]
+    return httpx.Response(
+        response.status_code,
+        headers=kept,
+        content=bytes(body),
+        request=response.request,
+    )
 
 
 async def safe_post(

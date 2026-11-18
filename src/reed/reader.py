@@ -9,9 +9,12 @@ import logging
 import httpx
 import trafilatura
 
+from .config import get_settings
 from .http import UnsafeURLError, http_client, safe_get
 
 logger = logging.getLogger(__name__)
+
+_ARTICLE_TYPES = ("text/html", "application/xhtml+xml")
 
 
 async def extract_article(url: str, http: httpx.AsyncClient | None = None) -> str | None:
@@ -24,11 +27,15 @@ async def extract_article(url: str, http: httpx.AsyncClient | None = None) -> st
     pages — see ADR-010).
     """
     try:
+        limits = {
+            "max_bytes": get_settings().max_article_bytes,
+            "allowed_content_types": _ARTICLE_TYPES,
+        }
         if http is not None:
-            response = await safe_get(http, url)
+            response = await safe_get(http, url, **limits)
         else:
             async with http_client() as client:
-                response = await safe_get(client, url)
+                response = await safe_get(client, url, **limits)
         response.raise_for_status()
     except (httpx.HTTPError, UnsafeURLError) as exc:
         logger.warning("Reader fetch failed for %s: %s", url, exc)
