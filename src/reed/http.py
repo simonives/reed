@@ -8,6 +8,7 @@ import functools
 import ipaddress
 import logging
 import socket
+import ssl
 from collections.abc import Iterable
 from typing import Any
 
@@ -46,7 +47,7 @@ DEFAULT_MAX_BYTES = 10 * 1024 * 1024
 
 
 @functools.lru_cache(maxsize=1)
-def _shared_ssl_context():
+def _shared_ssl_context() -> ssl.SSLContext:
     """One SSL context for every client. Building one re-parses the CA bundle
     into native memory, so doing it per request and per OPML entry adds up."""
     return httpx.create_ssl_context()

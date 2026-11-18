@@ -27,15 +27,16 @@ async def extract_article(url: str, http: httpx.AsyncClient | None = None) -> st
     pages — see ADR-010).
     """
     try:
-        limits = {
-            "max_bytes": get_settings().max_article_bytes,
-            "allowed_content_types": _ARTICLE_TYPES,
-        }
+        max_bytes = get_settings().max_article_bytes
         if http is not None:
-            response = await safe_get(http, url, **limits)
+            response = await safe_get(
+                http, url, max_bytes=max_bytes, allowed_content_types=_ARTICLE_TYPES
+            )
         else:
             async with http_client() as client:
-                response = await safe_get(client, url, **limits)
+                response = await safe_get(
+                    client, url, max_bytes=max_bytes, allowed_content_types=_ARTICLE_TYPES
+                )
         response.raise_for_status()
     except (httpx.HTTPError, UnsafeURLError) as exc:
         logger.warning("Reader fetch failed for %s: %s", url, exc)
